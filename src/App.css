@@ -1,0 +1,95 @@
+.landing {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.landing-inner {
+  max-width: 520px;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo-mark {
+  margin-bottom: 8px;
+  filter: drop-shadow(0 8px 24px rgba(14, 165, 233, 0.25));
+}
+
+.landing h1 {
+  margin: 0;
+  font-size: clamp(32px, 6vw, 48px);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  color: var(--text-h);
+  background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: clamp(15px, 2.4vw, 18px);
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.status-card {
+  margin-top: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 22px;
+  border-radius: 14px;
+  background: var(--status-bg);
+  border: 1px solid var(--status-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--status-shadow);
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--status-dot);
+  box-shadow: 0 0 0 4px var(--status-dot-ring);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-text {
+  font-size: 15px;
+  color: var(--text-h);
+  font-weight: 500;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.15);
+  }
+}
+
+@media (max-width: 640px) {
+  .landing {
+    padding: 20px 16px;
+  }
+
+  .status-card {
+    width: 100%;
+    justify-content: center;
+    padding: 14px 18px;
+  }
+}

@@ -1,0 +1,83 @@
+:root {
+  --brand-1: #0ea5e9;
+  --brand-2: #06b6d4;
+  --text: #475569;
+  --text-muted: #64748b;
+  --text-h: #0f172a;
+  --bg: #f8fafc;
+  --bg-grad:
+    radial-gradient(circle at 20% 10%, rgba(14, 165, 233, 0.08), transparent 40%),
+    radial-gradient(circle at 80% 90%, rgba(6, 182, 212, 0.08), transparent 45%);
+  --status-bg: rgba(255, 255, 255, 0.75);
+  --status-border: rgba(14, 165, 233, 0.18);
+  --status-shadow: 0 10px 30px -12px rgba(14, 165, 233, 0.25);
+  --status-dot: #10b981;
+  --status-dot-ring: rgba(16, 185, 129, 0.18);
+
+  --sans:
+    'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  font: 16px/1.55 var(--sans);
+  color-scheme: light dark;
+  color: var(--text);
+  background-color: var(--bg);
+  background-image: var(--bg-grad);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #94a3b8;
+    --text-muted: #64748b;
+    --text-h: #f1f5f9;
+    --bg: #0b1120;
+    --bg-grad:
+      radial-gradient(circle at 20% 10%, rgba(14, 165, 233, 0.16), transparent 40%),
+      radial-gradient(circle at 80% 90%, rgba(6, 182, 212, 0.14), transparent 45%);
+    --status-bg: rgba(30, 41, 59, 0.6);
+    --status-border: rgba(14, 165, 233, 0.25);
+    --status-shadow: 0 16px 40px -16px rgba(2, 6, 23, 0.6);
+    --status-dot: #34d399;
+    --status-dot-ring: rgba(52, 211, 153, 0.18);
+  }
+}
+
+#root {
+  min-height: 100svh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  width: 100%;
+  background: inherit;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--text-h);
+  font-family: var(--sans);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--brand-1);
+}
