@@ -4,7 +4,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import './App.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { supabase } from './lib/supabase'
-import type { Clinic, ClinicMembership } from './types/domain'
+import type { Clinic, ClinicMembership, Patient } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 
@@ -194,6 +194,7 @@ function ClinicSetupScreen({ user }: { user: User }) {
 
 function ClinicShell({ context }: { context: MembershipContext }) {
   const [logoutError, setLogoutError] = useState<string | null>(null)
+  const [activeModule, setActiveModule] = useState('Dashboard')
 
   async function handleLogout() {
     const error = await signOut()
@@ -205,13 +206,81 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       <aside className="sidebar">
         <div><p className="eyebrow">SmartDental HMIS</p><p className="clinic-name">{context.clinic.name}</p></div>
         <nav aria-label="Clinic modules">
-          {['Dashboard', 'Patients', 'Appointments', 'Clinical Visits', 'Billing', 'Prescriptions', 'Investigations'].map((item) => <span className="nav-item" key={item}>{item}</span>)}
+          {['Dashboard', 'Appointments', 'Clinical Visits', 'Billing', 'Prescriptions', 'Investigations'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}>{item}</span>)}
+          <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => setActiveModule('Patients')} type="button">Patients</button>
         </nav>
         <div className="user-area"><p>{context.user.email ?? 'Signed-in user'}</p><p className="role">{context.membership.role}</p><button className="button-secondary" onClick={handleLogout}>Log out</button>{logoutError && <p className="form-error" role="alert">{logoutError}</p>}</div>
       </aside>
-      <section className="shell-content"><p className="eyebrow">Clinic workspace</p><h1>{context.clinic.name}</h1><p className="panel-copy">Your clinic workspace is ready.</p></section>
+      <section className="shell-content">
+        {activeModule === 'Patients' ? <PatientsView /> : <><p className="eyebrow">Clinic workspace</p><h1>{context.clinic.name}</h1><p className="panel-copy">Your clinic workspace is ready.</p></>}
+      </section>
     </main>
   )
+}
+
+function PatientsView() {
+  const [patients, setPatients] = useState<Patient[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPatients() {
+      if (!supabase) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+
+      const { data, error: queryError } = await supabase
+        .from('patients')
+        .select('id, clinic_id, patient_number, first_name, middle_name, last_name, gender, date_of_birth, phone, created_at')
+        .order('created_at', { ascending: false })
+
+      if (cancelled) return
+      setLoading(false)
+      if (queryError) {
+        setError('We could not load patients. Please try again.')
+        return
+      }
+      setPatients((data ?? []) as Patient[])
+    }
+
+    void loadPatients()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return (
+    <div className="patients-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">Patient management</p><h1>Patients</h1><p className="panel-copy">View the patients in your clinic.</p></div>
+        <button className="primary-action" disabled type="button">Register New Patient</button>
+      </div>
+      {loading && <div className="state-panel" role="status">Loading patients...</div>}
+      {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
+      {!loading && !error && patients.length === 0 && <div className="state-panel"><h2>No patients yet</h2><p>Registered patients will appear here.</p></div>}
+      {!loading && !error && patients.length > 0 && <PatientTable patients={patients} />}
+    </div>
+  )
+}
+
+function PatientTable({ patients }: { patients: Patient[] }) {
+  return (
+    <div className="table-frame">
+      <table className="patient-table">
+        <thead><tr><th>Patient number</th><th>Full name</th><th>Gender</th><th>Date of birth</th><th>Phone</th><th>Created</th></tr></thead>
+        <tbody>{patients.map((patient) => <tr key={patient.id}><td>{patient.patient_number}</td><td>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</td><td>{patient.gender || '-'}</td><td>{formatDate(patient.date_of_birth)}</td><td>{patient.phone || '-'}</td><td>{formatDate(patient.created_at)}</td></tr>)}</tbody>
+      </table>
+    </div>
+  )
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return '-'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value))
 }
 
 function StatusScreen({ message, action }: { message: string; action?: React.ReactNode }) {
