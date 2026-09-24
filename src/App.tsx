@@ -4,7 +4,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import './App.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { supabase } from './lib/supabase'
-import type { Clinic, ClinicMembership, Patient } from './types/domain'
+import type { Clinic, ClinicMembership, Patient, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 
@@ -204,24 +204,67 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   return (
     <main className="shell">
       <aside className="sidebar">
-        <div><p className="eyebrow">SmartDental HMIS</p><p className="clinic-name">{context.clinic.name}</p></div>
+        <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{context.clinic.name}</p></div></div>
         <nav aria-label="Clinic modules">
-          {['Dashboard', 'Appointments', 'Clinical Visits', 'Billing', 'Prescriptions', 'Investigations'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}>{item}</span>)}
-          <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => setActiveModule('Patients')} type="button">Patients</button>
+          <p className="nav-label">Workspace</p>
+          {['Dashboard', 'Appointments', 'Clinical Visits'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
+          <p className="nav-label nav-label-spaced">Management</p>
+          {['Billing', 'Prescriptions', 'Investigations'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
+          <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => setActiveModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
         </nav>
-        <div className="user-area"><p>{context.user.email ?? 'Signed-in user'}</p><p className="role">{context.membership.role}</p><button className="button-secondary" onClick={handleLogout}>Log out</button>{logoutError && <p className="form-error" role="alert">{logoutError}</p>}</div>
+        <div className="user-area"><div className="user-summary"><div className="avatar">{(context.user.email?.[0] ?? 'U').toUpperCase()}</div><div><p>{context.user.email ?? 'Signed-in user'}</p><p className="role">{context.membership.role}</p></div></div><button className="button-secondary" onClick={handleLogout}>Log out</button>{logoutError && <p className="form-error" role="alert">{logoutError}</p>}</div>
       </aside>
       <section className="shell-content">
-        {activeModule === 'Patients' ? <PatientsView /> : <><p className="eyebrow">Clinic workspace</p><h1>{context.clinic.name}</h1><p className="panel-copy">Your clinic workspace is ready.</p></>}
+        <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
+        {activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : <DashboardView clinicName={context.clinic.name} onOpenPatients={() => setActiveModule('Patients')} />}
       </section>
     </main>
   )
 }
 
-function PatientsView() {
+function DashboardView({ clinicName, onOpenPatients }: { clinicName: string; onOpenPatients: () => void }) {
+  return (
+    <div className="dashboard-page">
+      <div className="dashboard-intro"><div><p className="eyebrow">Good to see you</p><h1>{clinicName}</h1><p className="panel-copy">Your clinic workspace is ready for today.</p></div><button className="primary-action" onClick={onOpenPatients} type="button">Open patient list</button></div>
+      <div className="summary-grid"><section className="summary-card summary-card-accent"><p className="card-label">Patients</p><p className="card-value">Active workspace</p><p className="card-note">Manage registrations from the patient list.</p></section><section className="summary-card"><p className="card-label">Appointments</p><p className="card-value">Coming soon</p><p className="card-note">Appointment workflows are not enabled yet.</p></section><section className="summary-card"><p className="card-label">Clinical visits</p><p className="card-value">Coming soon</p><p className="card-note">Clinical documentation will appear here.</p></section></div>
+      <section className="dashboard-panel"><div><p className="eyebrow">Workspace status</p><h2>Everything is ready</h2><p className="panel-copy">Use Patients to register and review the people receiving care at {clinicName}.</p></div><span className="ready-badge"><span className="status-indicator" />Operational</span></section>
+    </div>
+  )
+}
+
+type PatientFormValues = {
+  first_name: string
+  middle_name: string
+  last_name: string
+  gender: string
+  date_of_birth: string
+  approximate_age_years: string
+  phone: string
+  email: string
+  address: string
+}
+
+const initialPatientForm: PatientFormValues = {
+  first_name: '',
+  middle_name: '',
+  last_name: '',
+  gender: '',
+  date_of_birth: '',
+  approximate_age_years: '',
+  phone: '',
+  email: '',
+  address: '',
+}
+
+function PatientsView({ clinicId, userId, role, clinicianLabel }: { clinicId: string; userId: string; role: UserRole; clinicianLabel: string }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [showRegistration, setShowRegistration] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
+  const [refreshVersion, setRefreshVersion] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -235,7 +278,7 @@ function PatientsView() {
 
       const { data, error: queryError } = await supabase
         .from('patients')
-        .select('id, clinic_id, patient_number, first_name, middle_name, last_name, gender, date_of_birth, phone, created_at')
+        .select('*')
         .order('created_at', { ascending: false })
 
       if (cancelled) return
@@ -251,36 +294,427 @@ function PatientsView() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshVersion])
+
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+  const visiblePatients = patients.filter((patient) => {
+    if (!normalizedSearch) return true
+    return [patient.patient_number, patient.first_name, patient.middle_name, patient.last_name, patient.phone]
+      .filter(Boolean)
+      .some((value) => value!.toLowerCase().includes(normalizedSearch))
+  })
+
+  function handleRegistered(patient: Patient) {
+    setShowRegistration(false)
+    setSuccess(`Patient file ${patient.patient_number} was registered successfully.`)
+    setRefreshVersion((version) => version + 1)
+  }
+
+  function handlePatientUpdated(updatedPatient: Patient) {
+    setPatients((current) => current.map((patient) => patient.id === updatedPatient.id ? updatedPatient : patient))
+    setSelectedPatient(updatedPatient)
+    setSuccess('Patient details updated successfully.')
+    setRefreshVersion((version) => version + 1)
+  }
 
   return (
     <div className="patients-page">
       <div className="page-heading">
-        <div><p className="eyebrow">Patient management</p><h1>Patients</h1><p className="panel-copy">View the patients in your clinic.</p></div>
-        <button className="primary-action" disabled type="button">Register New Patient</button>
+        <div><p className="eyebrow">Patient management</p><h1>{selectedPatient ? 'Patient details' : 'Patients'}</h1><p className="panel-copy">{selectedPatient ? 'Review and update demographic information.' : 'Register and review the people receiving care at your clinic.'}</p></div>
+        {!showRegistration && <button className="primary-action" onClick={() => { setSuccess(null); setError(null); setShowRegistration(true) }} type="button">Register New Patient</button>}
       </div>
-      {loading && <div className="state-panel" role="status">Loading patients...</div>}
-      {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-      {!loading && !error && patients.length === 0 && <div className="state-panel"><h2>No patients yet</h2><p>Registered patients will appear here.</p></div>}
-      {!loading && !error && patients.length > 0 && <PatientTable patients={patients} />}
+      {success && <div className="state-panel state-success" role="status">{success}</div>}
+      {showRegistration && <PatientRegistrationForm clinicId={clinicId} onCancel={() => setShowRegistration(false)} onRegistered={handleRegistered} />}
+      {selectedPatient && <PatientProfile clinicId={clinicId} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => setSelectedPatient(null)} onUpdated={handlePatientUpdated} />}
+      {!selectedPatient && <>
+        <div className="patient-toolbar"><label className="search-field"><span>Search patients</span><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="File number, name, or phone" type="search" /></label><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
+        {loading && <div className="state-panel" role="status">Loading patients...</div>}
+        {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
+        {!loading && !error && patients.length === 0 && <div className="state-panel"><h2>No patients yet</h2><p>Registered patients will appear here.</p></div>}
+        {!loading && !error && patients.length > 0 && visiblePatients.length === 0 && <div className="state-panel"><h2>No matching patients</h2><p>Try a different file number, name, or phone number.</p></div>}
+        {!loading && !error && visiblePatients.length > 0 && <PatientTable patients={visiblePatients} onSelect={setSelectedPatient} />}
+      </>}
     </div>
   )
 }
 
-function PatientTable({ patients }: { patients: Patient[] }) {
+function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicId: string; onCancel: () => void; onRegistered: (patient: Patient) => void }) {
+  const [form, setForm] = useState<PatientFormValues>(initialPatientForm)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function updateField(field: keyof PatientFormValues, value: string) {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === 'date_of_birth' && value ? { approximate_age_years: '' } : {}),
+      ...(field === 'approximate_age_years' && value ? { date_of_birth: '' } : {}),
+    }))
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const firstName = form.first_name.trim()
+    const lastName = form.last_name.trim()
+    const email = form.email.trim()
+    const ageInput = form.approximate_age_years.trim()
+    const approximateAge = ageInput ? Number(ageInput) : null
+
+    if (!firstName || !lastName || !form.gender) {
+      setError('First name, last name, and gender are required.')
+      return
+    }
+    if (email && !isValidEmail(email)) {
+      setError('Enter a valid email address or leave email blank.')
+      return
+    }
+    if (approximateAge !== null && (!Number.isInteger(approximateAge) || approximateAge < 0 || approximateAge > 130)) {
+      setError('Approximate age must be a whole number between 0 and 130.')
+      return
+    }
+    if (form.date_of_birth && ageInput) {
+      setError('Enter either a date of birth or an approximate age, not both.')
+      return
+    }
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+    const { data: insertedPatient, error: insertError } = await supabase.from('patients').insert({
+      clinic_id: clinicId,
+      first_name: firstName,
+      middle_name: form.middle_name.trim() || null,
+      last_name: lastName,
+      gender: form.gender.trim() || null,
+      date_of_birth: form.date_of_birth || null,
+      approximate_age_years: approximateAge,
+      phone: form.phone.trim() || null,
+      email: email || null,
+      address: form.address.trim() || null,
+    } as never).select('*').single()
+    setSubmitting(false)
+    if (insertError) {
+      setError(insertError.code === '23505' ? 'That patient number is already in use in this clinic.' : 'We could not register the patient. Please try again.')
+      return
+    }
+    if (!insertedPatient) {
+      setError('The patient was saved, but we could not load the generated file number. Please refresh and try again.')
+      return
+    }
+    onRegistered(insertedPatient as Patient)
+  }
+
+  return (
+    <section className="registration-panel" aria-labelledby="registration-heading">
+      <div className="registration-heading"><div><p className="eyebrow">Patient management</p><h2 id="registration-heading">Register New Patient</h2><p className="panel-copy">Enter the minimum details needed to create a patient file.</p><p className="generated-number-note">Patient file number will be generated automatically.</p></div></div>
+      <form className="patient-form" onSubmit={handleSubmit}>
+        <label>First name<input value={form.first_name} onChange={(event) => updateField('first_name', event.target.value)} autoComplete="given-name" required /></label>
+        <label>Middle name<input value={form.middle_name} onChange={(event) => updateField('middle_name', event.target.value)} autoComplete="additional-name" /></label>
+        <label>Last name<input value={form.last_name} onChange={(event) => updateField('last_name', event.target.value)} autoComplete="family-name" required /></label>
+        <label>Gender<select value={form.gender} onChange={(event) => updateField('gender', event.target.value)}><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
+        <label>Date of birth<input type="date" value={form.date_of_birth} onChange={(event) => updateField('date_of_birth', event.target.value)} /></label>
+        <label>Approximate age (years)<input type="number" min="0" max="130" step="1" value={form.approximate_age_years} onChange={(event) => updateField('approximate_age_years', event.target.value)} placeholder="Use if DOB is unknown" /></label>
+        <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>
+        <label>Email<input type="email" value={form.email} onChange={(event) => updateField('email', event.target.value)} autoComplete="email" /></label>
+        <label className="full-width">Address<input value={form.address} onChange={(event) => updateField('address', event.target.value)} autoComplete="street-address" /></label>
+        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Saving patient...' : 'Save patient'}</button></div>
+      </form>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  )
+}
+
+function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (patient: Patient) => void }) {
   return (
     <div className="table-frame">
       <table className="patient-table">
-        <thead><tr><th>Patient number</th><th>Full name</th><th>Gender</th><th>Date of birth</th><th>Phone</th><th>Created</th></tr></thead>
-        <tbody>{patients.map((patient) => <tr key={patient.id}><td>{patient.patient_number}</td><td>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</td><td>{patient.gender || '-'}</td><td>{formatDate(patient.date_of_birth)}</td><td>{patient.phone || '-'}</td><td>{formatDate(patient.created_at)}</td></tr>)}</tbody>
+        <thead><tr><th>Patient file</th><th>Full name</th><th>Gender</th><th>Date of birth</th><th>Phone</th><th>Registered</th></tr></thead>
+        <tbody>{patients.map((patient) => <tr className="patient-row" key={patient.id} onClick={() => onSelect(patient)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(patient) }} role="button" tabIndex={0}><td><span className="file-number">{patient.patient_number}</span></td><td className="patient-name-cell">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</td><td>{patient.gender || '-'}</td><td>{formatDate(patient.date_of_birth)}</td><td>{patient.phone || '-'}</td><td>{formatDate(patient.created_at)}</td></tr>)}</tbody>
       </table>
     </div>
   )
 }
 
+function PatientProfile({ clinicId, userId, role, clinicianLabel, patient, onBack, onUpdated }: { clinicId: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; onBack: () => void; onUpdated: (patient: Patient) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [visits, setVisits] = useState<Visit[]>([])
+  const [visitLoading, setVisitLoading] = useState(true)
+  const [visitError, setVisitError] = useState<string | null>(null)
+  const [visitSuccess, setVisitSuccess] = useState<string | null>(null)
+  const [showVisitForm, setShowVisitForm] = useState(false)
+  const [visitRefreshVersion, setVisitRefreshVersion] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadVisits() {
+      setVisitLoading(true)
+      if (!supabase) {
+        setVisitLoading(false)
+        setVisitError('Supabase is not configured.')
+        return
+      }
+
+      const { data, error: queryError } = await supabase
+        .from('visits')
+        .select('*')
+        .eq('clinic_id', clinicId)
+        .eq('patient_id', patient.id)
+        .order('visit_date', { ascending: false })
+
+      if (cancelled) return
+      setVisitLoading(false)
+      if (queryError) {
+        setVisitError('We could not load this patient\'s visit history.')
+        return
+      }
+      setVisits((data ?? []) as Visit[])
+    }
+
+    void loadVisits()
+    return () => {
+      cancelled = true
+    }
+  }, [clinicId, patient.id, visitRefreshVersion])
+
+  function handleVisitCreated(visit: Visit) {
+    setShowVisitForm(false)
+    setVisitSuccess(`Visit from ${formatDateTime(visit.visit_date)} was added to the patient history.`)
+    setVisitRefreshVersion((version) => version + 1)
+  }
+
+  return (
+    <section className="profile-page">
+      <button className="back-button" onClick={onBack} type="button">Back to patients</button>
+      {!editing ? <>
+        <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button><button className="primary-action" disabled={role === 'receptionist' || role === 'patient'} onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }} type="button">New Visit</button></div></div>
+        <div className="profile-grid"><section className="profile-card"><p className="card-label">Personal details</p><dl className="detail-list"><DetailItem label="Full name" value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} /><DetailItem label="Gender" value={patient.gender} /><DetailItem label="Date of birth" value={formatDate(patient.date_of_birth)} /><DetailItem label="Age" value={formatPatientAge(patient)} /><DetailItem label="Registered" value={formatDate(patient.created_at)} /></dl></section><section className="profile-card"><p className="card-label">Contact details</p><dl className="detail-list"><DetailItem label="Phone" value={patient.phone} /><DetailItem label="Email" value={patient.email} /><DetailItem label="Address" value={patient.address} /></dl></section></div>
+        {role === 'receptionist' && <p className="role-note">A doctor or clinic administrator must be signed in to create a clinical visit.</p>}
+        {showVisitForm && <NewVisitForm clinicId={clinicId} patientId={patient.id} doctorId={userId} clinicianLabel={clinicianLabel} onCancel={() => setShowVisitForm(false)} onCreated={handleVisitCreated} />}
+        {visitSuccess && <div className="state-panel state-success" role="status">{visitSuccess}</div>}
+        <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Visit history</p><h3>Clinical encounters</h3></div><span className="history-count">{visits.length} {visits.length === 1 ? 'visit' : 'visits'}</span></div>
+          {visitLoading && <p className="inline-state" role="status">Loading visit history...</p>}
+          {!visitLoading && visitError && <p className="form-error" role="alert">{visitError}</p>}
+          {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
+          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} visit={visit} isLatest={index === 0} clinicianLabel={visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician'} />)}</div>}
+        </section>
+      </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}
+    </section>
+  )
+}
+
+type NewVisitFormValues = {
+  visit_date: string
+  chief_complaint: string
+  assessment: string
+  treatment_plan: string
+  clinical_notes: string
+}
+
+const initialVisitForm: NewVisitFormValues = {
+  visit_date: '',
+  chief_complaint: '',
+  assessment: '',
+  treatment_plan: '',
+  clinical_notes: '',
+}
+
+function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel, onCreated }: { clinicId: string; patientId: string; doctorId: string; clinicianLabel: string; onCancel: () => void; onCreated: (visit: Visit) => void }) {
+  const [form, setForm] = useState<NewVisitFormValues>(initialVisitForm)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function updateField(field: keyof NewVisitFormValues, value: string) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!form.chief_complaint.trim() && !form.clinical_notes.trim()) {
+      setError('Enter a chief complaint or clinical note to create the visit.')
+      return
+    }
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+    const { data: createdVisit, error: insertError } = await supabase.from('visits').insert({
+      clinic_id: clinicId,
+      patient_id: patientId,
+      doctor_id: doctorId,
+      ...(form.visit_date ? { visit_date: new Date(form.visit_date).toISOString() } : {}),
+      chief_complaint: form.chief_complaint.trim() || null,
+      assessment: form.assessment.trim() || null,
+      treatment_plan: form.treatment_plan.trim() || null,
+      clinical_notes: form.clinical_notes.trim() || null,
+    } as never).select('*').single()
+    setSubmitting(false)
+    if (insertError) {
+      setError('We could not create this visit. Confirm that your account has doctor or administrator access.')
+      return
+    }
+    if (!createdVisit) {
+      setError('The visit was saved, but it could not be loaded into the history.')
+      return
+    }
+    onCreated(createdVisit as Visit)
+  }
+
+  return (
+    <section className="registration-panel visit-form-panel" aria-labelledby="new-visit-heading">
+      <div className="registration-heading"><p className="eyebrow">Clinical encounter</p><h2 id="new-visit-heading">New Visit</h2><p className="panel-copy">Record a new encounter as {clinicianLabel}. Previous visits remain unchanged.</p></div>
+      <form className="patient-form" onSubmit={handleSubmit}>
+        <label>Visit date and time<input type="datetime-local" value={form.visit_date} onChange={(event) => updateField('visit_date', event.target.value)} /></label>
+        <label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label>
+        <label>Assessment<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label>
+        <label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label>
+        <label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label>
+        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Saving visit...' : 'Save visit'}</button></div>
+      </form>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  )
+}
+
+function VisitCard({ visit, isLatest, clinicianLabel }: { visit: Visit; isLatest: boolean; clinicianLabel: string }) {
+  return <article className={`visit-card${isLatest ? ' latest' : ''}`}><div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div>{isLatest && <span className="latest-badge">Latest</span>}</div><div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div></article>
+}
+
+function DetailItem({ label, value }: { label: string; value: string | null | undefined }) {
+  return <div><dt>{label}</dt><dd>{value || '-'}</dd></div>
+}
+
+function PatientEditForm({ clinicId, patient, onCancel, onSaved }: { clinicId: string; patient: Patient; onCancel: () => void; onSaved: (patient: Patient) => void }) {
+  const [form, setForm] = useState<PatientFormValues>({
+    first_name: patient.first_name,
+    middle_name: patient.middle_name ?? '',
+    last_name: patient.last_name,
+    gender: patient.gender ?? '',
+    date_of_birth: patient.date_of_birth ?? '',
+    approximate_age_years: patient.approximate_age_years?.toString() ?? '',
+    phone: patient.phone ?? '',
+    email: patient.email ?? '',
+    address: patient.address ?? '',
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function updateField(field: keyof PatientFormValues, value: string) {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === 'date_of_birth' && value ? { approximate_age_years: '' } : {}),
+      ...(field === 'approximate_age_years' && value ? { date_of_birth: '' } : {}),
+    }))
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const firstName = form.first_name.trim()
+    const lastName = form.last_name.trim()
+    const email = form.email.trim()
+    const ageInput = form.approximate_age_years.trim()
+    const approximateAge = ageInput ? Number(ageInput) : null
+    if (!firstName || !lastName || !form.gender) {
+      setError('First name, last name, and gender are required.')
+      return
+    }
+    if (email && !isValidEmail(email)) {
+      setError('Enter a valid email address or leave email blank.')
+      return
+    }
+    if (approximateAge !== null && (!Number.isInteger(approximateAge) || approximateAge < 0 || approximateAge > 130)) {
+      setError('Approximate age must be a whole number between 0 and 130.')
+      return
+    }
+    if (form.date_of_birth && ageInput) {
+      setError('Enter either a date of birth or an approximate age, not both.')
+      return
+    }
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+    const { data: updatedPatient, error: updateError } = await supabase.from('patients').update({
+      first_name: firstName,
+      middle_name: form.middle_name.trim() || null,
+      last_name: lastName,
+      gender: form.gender,
+      date_of_birth: form.date_of_birth || null,
+      approximate_age_years: approximateAge,
+      phone: form.phone.trim() || null,
+      email: email || null,
+      address: form.address.trim() || null,
+    } as never).eq('id', patient.id).eq('clinic_id', clinicId).select('*').single()
+    setSubmitting(false)
+    if (updateError) {
+      setError('We could not update the patient details. Please try again.')
+      return
+    }
+    if (!updatedPatient) {
+      setError('The patient was updated, but the new details could not be loaded.')
+      return
+    }
+    onSaved(updatedPatient as Patient)
+  }
+
+  return (
+    <section className="registration-panel edit-panel" aria-labelledby="edit-patient-heading">
+      <div className="registration-heading"><p className="eyebrow">Patient file {patient.patient_number}</p><h2 id="edit-patient-heading">Edit patient details</h2><p className="panel-copy">Update demographic and contact information only.</p></div>
+      <form className="patient-form" onSubmit={handleSubmit}>
+        <label>First name<input value={form.first_name} onChange={(event) => updateField('first_name', event.target.value)} autoComplete="given-name" required /></label>
+        <label>Middle name<input value={form.middle_name} onChange={(event) => updateField('middle_name', event.target.value)} autoComplete="additional-name" /></label>
+        <label>Last name<input value={form.last_name} onChange={(event) => updateField('last_name', event.target.value)} autoComplete="family-name" required /></label>
+        <label>Gender<select value={form.gender} onChange={(event) => updateField('gender', event.target.value)} required><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
+        <label>Date of birth<input type="date" value={form.date_of_birth} onChange={(event) => updateField('date_of_birth', event.target.value)} /></label>
+        <label>Approximate age (years)<input type="number" min="0" max="130" step="1" value={form.approximate_age_years} onChange={(event) => updateField('approximate_age_years', event.target.value)} placeholder="Use if DOB is unknown" /></label>
+        <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>
+        <label>Email<input type="email" value={form.email} onChange={(event) => updateField('email', event.target.value)} autoComplete="email" /></label>
+        <label className="full-width">Address<input value={form.address} onChange={(event) => updateField('address', event.target.value)} autoComplete="street-address" /></label>
+        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Saving changes...' : 'Save changes'}</button></div>
+      </form>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  )
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function formatPatientAge(patient: Patient) {
+  if (patient.date_of_birth) {
+    const birthDate = new Date(`${patient.date_of_birth}T00:00:00`)
+    const today = new Date()
+    let age = today.getFullYear() - birthDate.getFullYear()
+    const birthdayPassed = today.getMonth() > birthDate.getMonth()
+      || (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate())
+    if (!birthdayPassed) age -= 1
+    return `${Math.max(age, 0)} years`
+  }
+  if (patient.approximate_age_years !== null && patient.approximate_age_years !== undefined) {
+    return `Approx. ${patient.approximate_age_years} years`
+  }
+  return '-'
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) return '-'
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value))
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '-'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
 function StatusScreen({ message, action }: { message: string; action?: React.ReactNode }) {

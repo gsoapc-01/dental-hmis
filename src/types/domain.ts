@@ -73,6 +73,7 @@ export interface Patient {
   middle_name?: string | null
   last_name: string
   date_of_birth?: string | null
+  approximate_age_years?: number | null
   gender?: string | null
   national_id?: string | null
   phone?: string | null
