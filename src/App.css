@@ -215,6 +215,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .topbar-meta, .ready-badge { display: inline-flex; align-items: center; gap: 8px; color: var(--slate-500); font-size: 12px; font-weight: 700; }
 .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2ca36a; box-shadow: 0 0 0 4px #e2f4ea; }
 .dashboard-page, .patients-page { max-width: 1180px; }
+.appointments-page { max-width: 1180px; }
 
 .dashboard-intro, .page-heading {
   display: flex;
@@ -225,6 +226,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 .dashboard-intro .panel-copy, .page-heading .panel-copy { margin-bottom: 0; }
+.refresh-button { width: auto; min-width: 92px; color: var(--slate-700); border-color: var(--slate-300); background: var(--surface); }
 
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
 
@@ -338,6 +340,21 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .visit-fields p { margin: 4px 0 0; color: var(--slate-700); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
 .visit-form-panel { margin-top: 20px; }
 
+.appointment-form-panel { margin-top: 20px; }
+.appointment-list { display: grid; gap: 12px; }
+.appointment-card { display: grid; grid-template-columns: 160px minmax(0, 1fr) 180px; align-items: center; gap: 22px; padding: 18px 20px; border: 1px solid var(--slate-200); border-radius: 9px; background: var(--surface); box-shadow: 0 8px 24px rgba(16, 43, 68, 0.04); }
+.appointment-card:hover { border-color: #abd8e3; box-shadow: 0 10px 26px rgba(16, 43, 68, 0.08); }
+.appointment-date-block { display: grid; gap: 3px; padding-right: 20px; border-right: 1px solid var(--slate-200); }
+.appointment-date-block span { color: var(--slate-500); font-size: 12px; }
+.appointment-date-block strong { color: var(--navy-950); font-size: 19px; }
+.appointment-date-block small { color: var(--slate-500); font-size: 11px; }
+.appointment-patient { margin: 0 0 4px; color: var(--navy-950); font-size: 15px; font-weight: 800; }
+.appointment-file, .appointment-reason { margin: 0; color: var(--slate-500); font-size: 12px; }
+.appointment-reason { margin-top: 8px; color: var(--slate-700); }
+.appointment-meta { display: grid; justify-items: end; gap: 9px; }
+.appointment-meta p { margin: 0; color: var(--slate-700); font-size: 12px; font-weight: 700; text-align: right; }
+.appointment-status { padding: 5px 9px; border-radius: 999px; color: #176447; background: #e2f4ea; font-size: 10px; font-weight: 800; text-transform: capitalize; }
+
 .patient-form textarea {
   width: 100%;
   padding: 10px 12px;
@@ -387,6 +404,12 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .profile-header { display: block; }
   .profile-header .primary-action { margin-top: 20px; }
   .profile-actions { margin-top: 20px; }
+  .profile-actions { flex-wrap: wrap; }
+  .profile-actions button { flex: 1 1 auto; }
+  .appointment-card { grid-template-columns: 1fr; gap: 12px; }
+  .appointment-date-block { padding: 0 0 12px; border-right: 0; border-bottom: 1px solid var(--slate-200); }
+  .appointment-meta { justify-items: start; }
+  .appointment-meta p { text-align: left; }
   .dashboard-panel .ready-badge { margin-top: 20px; }
   .registration-panel { padding: 22px; }
   .full-width, .form-actions { grid-column: auto; }

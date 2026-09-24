@@ -4,7 +4,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import './App.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { supabase } from './lib/supabase'
-import type { Clinic, ClinicMembership, Patient, UserRole, Visit } from './types/domain'
+import type { Appointment, Clinic, ClinicMembership, Patient, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 
@@ -207,7 +207,8 @@ function ClinicShell({ context }: { context: MembershipContext }) {
         <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{context.clinic.name}</p></div></div>
         <nav aria-label="Clinic modules">
           <p className="nav-label">Workspace</p>
-          {['Dashboard', 'Appointments', 'Clinical Visits'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
+          {['Dashboard', 'Clinical Visits'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
+          <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => setActiveModule('Appointments')} type="button"><span className="nav-dot" />Appointments</button>
           <p className="nav-label nav-label-spaced">Management</p>
           {['Billing', 'Prescriptions', 'Investigations'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
           <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => setActiveModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
@@ -216,7 +217,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : <DashboardView clinicName={context.clinic.name} onOpenPatients={() => setActiveModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : <DashboardView clinicName={context.clinic.name} onOpenPatients={() => setActiveModule('Patients')} />}
       </section>
     </main>
   )
@@ -230,6 +231,109 @@ function DashboardView({ clinicName, onOpenPatients }: { clinicName: string; onO
       <section className="dashboard-panel"><div><p className="eyebrow">Workspace status</p><h2>Everything is ready</h2><p className="panel-copy">Use Patients to register and review the people receiving care at {clinicName}.</p></div><span className="ready-badge"><span className="status-indicator" />Operational</span></section>
     </div>
   )
+}
+
+type DoctorOption = {
+  id: string
+  name: string
+}
+
+type PatientAppointmentSummary = {
+  id: string
+  patient_number: string
+  first_name: string
+  middle_name?: string | null
+  last_name: string
+}
+
+async function loadDoctorOptions(clinicId: string): Promise<{ doctors: DoctorOption[]; error: string | null }> {
+  if (!supabase) return { doctors: [], error: 'Supabase is not configured.' }
+
+  const { data: membershipRows, error: membershipError } = await supabase
+    .from('clinic_memberships')
+    .select('user_id, clinic_id, role, created_at')
+    .eq('clinic_id', clinicId)
+    .eq('role', 'doctor')
+
+  if (membershipError) return { doctors: [], error: 'We could not load the clinic doctor directory.' }
+  const doctorIds = (membershipRows as ClinicMembership[]).map((membership) => membership.user_id)
+  if (doctorIds.length === 0) return { doctors: [], error: 'No doctors are available in this clinic.' }
+
+  const { data: profileRows, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, display_name')
+    .in('id', doctorIds)
+
+  if (profileError) return { doctors: [], error: 'We could not load doctor names for this clinic.' }
+  const profiles = (profileRows ?? []) as Array<{ id: string; display_name?: string | null }>
+  return {
+    doctors: doctorIds.map((id) => ({
+      id,
+      name: profiles.find((profile) => profile.id === id)?.display_name?.trim() || 'Clinic doctor',
+    })),
+    error: null,
+  }
+}
+
+function AppointmentsView({ clinicId }: { clinicId: string }) {
+  const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [patients, setPatients] = useState<Record<string, PatientAppointmentSummary>>({})
+  const [doctors, setDoctors] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshVersion, setRefreshVersion] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadAppointments() {
+      if (!supabase) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+
+      setLoading(true)
+      const today = new Date().toISOString().slice(0, 10)
+      const [appointmentResult, patientResult, doctorResult] = await Promise.all([
+        supabase.from('appointments').select('*').eq('clinic_id', clinicId).gte('appointment_date', today).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
+        supabase.from('patients').select('id, patient_number, first_name, middle_name, last_name').eq('clinic_id', clinicId),
+        loadDoctorOptions(clinicId),
+      ])
+
+      if (cancelled) return
+      setLoading(false)
+      if (appointmentResult.error || patientResult.error || doctorResult.error) {
+        setError(appointmentResult.error ? 'We could not load upcoming appointments.' : patientResult.error ? 'We could not load appointment patient details.' : doctorResult.error)
+        return
+      }
+
+      const patientMap = Object.fromEntries(((patientResult.data ?? []) as PatientAppointmentSummary[]).map((patient) => [patient.id, patient]))
+      const doctorMap = Object.fromEntries(doctorResult.doctors.map((doctor) => [doctor.id, doctor.name]))
+      setAppointments((appointmentResult.data ?? []) as Appointment[])
+      setPatients(patientMap)
+      setDoctors(doctorMap)
+    }
+
+    void loadAppointments()
+    return () => {
+      cancelled = true
+    }
+  }, [clinicId, refreshVersion])
+
+  return (
+    <div className="appointments-page">
+      <div className="page-heading"><div><p className="eyebrow">Care coordination</p><h1>Appointments</h1><p className="panel-copy">Upcoming appointments for your clinic.</p></div><button className="button-secondary refresh-button" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button></div>
+      {loading && <div className="state-panel" role="status">Loading upcoming appointments...</div>}
+      {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
+      {!loading && !error && appointments.length === 0 && <div className="state-panel"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></div>}
+      {!loading && !error && appointments.length > 0 && <div className="appointment-list">{appointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} />)}</div>}
+    </div>
+  )
+}
+
+function AppointmentCard({ appointment, patient, doctorName }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string }) {
+  return <article className="appointment-card"><div className="appointment-date-block"><span>{formatDate(appointment.appointment_date)}</span><strong>{formatTime(appointment.start_time)}</strong><small>{formatTime(appointment.end_time)}</small></div><div className="appointment-main"><p className="appointment-patient">{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</p><p className="appointment-file">File {patient?.patient_number ?? '-'}</p>{appointment.service && <p className="appointment-reason">{appointment.service}</p>}</div><div className="appointment-meta"><p>{doctorName ?? 'Doctor unavailable'}</p><span className="appointment-status">{formatStatus(appointment.status)}</span></div></article>
 }
 
 type PatientFormValues = {
@@ -446,6 +550,8 @@ function PatientProfile({ clinicId, userId, role, clinicianLabel, patient, onBac
   const [visitSuccess, setVisitSuccess] = useState<string | null>(null)
   const [showVisitForm, setShowVisitForm] = useState(false)
   const [visitRefreshVersion, setVisitRefreshVersion] = useState(0)
+  const [showAppointmentForm, setShowAppointmentForm] = useState(false)
+  const [appointmentSuccess, setAppointmentSuccess] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -490,8 +596,10 @@ function PatientProfile({ clinicId, userId, role, clinicianLabel, patient, onBac
     <section className="profile-page">
       <button className="back-button" onClick={onBack} type="button">Back to patients</button>
       {!editing ? <>
-        <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button><button className="primary-action" disabled={role === 'receptionist' || role === 'patient'} onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }} type="button">New Visit</button></div></div>
+        <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button><button className="button-secondary profile-secondary-action" onClick={() => { setAppointmentSuccess(null); setShowAppointmentForm(true) }} type="button">Book Appointment</button><button className="primary-action" disabled={role === 'receptionist' || role === 'patient'} onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }} type="button">New Visit</button></div></div>
         <div className="profile-grid"><section className="profile-card"><p className="card-label">Personal details</p><dl className="detail-list"><DetailItem label="Full name" value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} /><DetailItem label="Gender" value={patient.gender} /><DetailItem label="Date of birth" value={formatDate(patient.date_of_birth)} /><DetailItem label="Age" value={formatPatientAge(patient)} /><DetailItem label="Registered" value={formatDate(patient.created_at)} /></dl></section><section className="profile-card"><p className="card-label">Contact details</p><dl className="detail-list"><DetailItem label="Phone" value={patient.phone} /><DetailItem label="Email" value={patient.email} /><DetailItem label="Address" value={patient.address} /></dl></section></div>
+        {showAppointmentForm && <AppointmentForm clinicId={clinicId} userId={userId} patient={patient} onCancel={() => setShowAppointmentForm(false)} onCreated={(appointment) => { setShowAppointmentForm(false); setAppointmentSuccess(`Appointment booked for ${formatDate(appointment.appointment_date)} at ${formatTime(appointment.start_time)}.`) }} />}
+        {appointmentSuccess && <div className="state-panel state-success" role="status">{appointmentSuccess}</div>}
         {role === 'receptionist' && <p className="role-note">A doctor or clinic administrator must be signed in to create a clinical visit.</p>}
         {showVisitForm && <NewVisitForm clinicId={clinicId} patientId={patient.id} doctorId={userId} clinicianLabel={clinicianLabel} onCancel={() => setShowVisitForm(false)} onCreated={handleVisitCreated} />}
         {visitSuccess && <div className="state-panel state-success" role="status">{visitSuccess}</div>}
@@ -584,6 +692,117 @@ function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel,
 
 function VisitCard({ visit, isLatest, clinicianLabel }: { visit: Visit; isLatest: boolean; clinicianLabel: string }) {
   return <article className={`visit-card${isLatest ? ' latest' : ''}`}><div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div>{isLatest && <span className="latest-badge">Latest</span>}</div><div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div></article>
+}
+
+type AppointmentFormValues = {
+  appointment_date: string
+  start_time: string
+  end_time: string
+  doctor_id: string
+  service: string
+  notes: string
+}
+
+function todayInputValue() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+const initialAppointmentForm: AppointmentFormValues = {
+  appointment_date: todayInputValue(),
+  start_time: '',
+  end_time: '',
+  doctor_id: '',
+  service: '',
+  notes: '',
+}
+
+function AppointmentForm({ clinicId, userId, patient, onCancel, onCreated }: { clinicId: string; userId: string; patient: Patient; onCancel: () => void; onCreated: (appointment: Appointment) => void }) {
+  const [form, setForm] = useState<AppointmentFormValues>(initialAppointmentForm)
+  const [doctors, setDoctors] = useState<DoctorOption[]>([])
+  const [loadingDoctors, setLoadingDoctors] = useState(true)
+  const [doctorError, setDoctorError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadDoctors() {
+      const result = await loadDoctorOptions(clinicId)
+      if (cancelled) return
+      setLoadingDoctors(false)
+      setDoctors(result.doctors)
+      setDoctorError(result.error)
+    }
+    void loadDoctors()
+    return () => {
+      cancelled = true
+    }
+  }, [clinicId])
+
+  function updateField(field: keyof AppointmentFormValues, value: string) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!form.appointment_date || !form.start_time || !form.end_time || !form.doctor_id) {
+      setError('Appointment date, start time, end time, and doctor are required.')
+      return
+    }
+    if (form.end_time <= form.start_time) {
+      setError('End time must be after the start time.')
+      return
+    }
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+    const { data: createdAppointment, error: insertError } = await supabase.from('appointments').insert({
+      clinic_id: clinicId,
+      patient_id: patient.id,
+      doctor_id: form.doctor_id,
+      created_by: userId,
+      appointment_date: form.appointment_date,
+      start_time: form.start_time,
+      end_time: form.end_time,
+      service: form.service.trim() || null,
+      notes: form.notes.trim() || null,
+      status: 'scheduled',
+    } as never).select('*').single()
+    setSubmitting(false)
+    if (insertError) {
+      setError('We could not book the appointment. Please confirm the selected doctor and clinic access.')
+      return
+    }
+    if (!createdAppointment) {
+      setError('The appointment was saved, but it could not be loaded.')
+      return
+    }
+    onCreated(createdAppointment as Appointment)
+  }
+
+  return (
+    <section className="registration-panel appointment-form-panel" aria-labelledby="book-appointment-heading">
+      <div className="registration-heading"><p className="eyebrow">Appointment booking</p><h2 id="book-appointment-heading">Book Appointment</h2><p className="panel-copy">For {[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p></div>
+      {loadingDoctors && <p className="inline-state" role="status">Loading doctors...</p>}
+      {!loadingDoctors && doctorError && <p className="form-error" role="alert">{doctorError}</p>}
+      {!loadingDoctors && !doctorError && <form className="patient-form" onSubmit={handleSubmit}>
+        <label>Patient<input value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} readOnly /></label>
+        <label>Doctor<select value={form.doctor_id} onChange={(event) => updateField('doctor_id', event.target.value)} required><option value="">Select doctor</option>{doctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}</select></label>
+        <label>Appointment date<input type="date" min={todayInputValue()} value={form.appointment_date} onChange={(event) => updateField('appointment_date', event.target.value)} required /></label>
+        <label>Status<select value="scheduled" disabled><option value="scheduled">Scheduled</option></select></label>
+        <label>Start time<input type="time" value={form.start_time} onChange={(event) => updateField('start_time', event.target.value)} required /></label>
+        <label>End time<input type="time" value={form.end_time} onChange={(event) => updateField('end_time', event.target.value)} required /></label>
+        <label>Reason / service<input value={form.service} onChange={(event) => updateField('service', event.target.value)} /></label>
+        <label className="full-width">Notes<textarea value={form.notes} onChange={(event) => updateField('notes', event.target.value)} rows={3} /></label>
+        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Booking appointment...' : 'Save appointment'}</button></div>
+      </form>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  )
 }
 
 function DetailItem({ label, value }: { label: string; value: string | null | undefined }) {
@@ -715,6 +934,15 @@ function formatDate(value: string | null | undefined) {
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '-'
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return '-'
+  return new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(new Date(`1970-01-01T${value}`))
+}
+
+function formatStatus(value: string) {
+  return value.replaceAll('_', ' ')
 }
 
 function StatusScreen({ message, action }: { message: string; action?: React.ReactNode }) {
