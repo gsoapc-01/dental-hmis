@@ -344,6 +344,24 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .visit-fields span { color: var(--slate-500); font-size: 11px; font-weight: 800; text-transform: uppercase; }
 .visit-fields p { margin: 4px 0 0; color: var(--slate-700); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
 .visit-form-panel { margin-top: 20px; }
+.clinical-records-panel { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--slate-200); }
+.clinical-records-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.clinical-records-grid > section { padding: 16px; border: 1px solid var(--slate-200); border-radius: 8px; background: #fbfcfd; }
+.clinical-records-grid h4 { margin: 0 0 12px; color: var(--navy-950); font-size: 15px; }
+.clinical-record-list { display: grid; gap: 8px; margin-bottom: 14px; }
+.clinical-record { display: grid; gap: 3px; padding: 10px; border: 1px solid var(--slate-200); border-radius: 7px; background: var(--surface); }
+.clinical-record strong { color: var(--navy-950); font-size: 13px; }
+.clinical-record span, .clinical-record p { margin: 0; color: var(--slate-500); font-size: 12px; line-height: 1.45; }
+.clinical-record p { color: var(--slate-700); }
+.record-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.record-form input, .record-form textarea { width: 100%; min-height: 38px; padding: 8px 9px; border: 1px solid var(--slate-300); border-radius: 6px; color: var(--slate-900); background: var(--surface); font-size: 12px; }
+.record-form textarea, .record-form button { grid-column: 1 / -1; }
+.record-form button { min-height: 38px; padding: 8px 10px; border: 0; border-radius: 6px; color: #fff; background: var(--blue-600); cursor: pointer; font-size: 12px; font-weight: 800; }
+.record-form button:disabled, .record-form input:disabled, .record-form textarea:disabled { cursor: not-allowed; opacity: 0.6; }
+.visit-record-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--slate-200); }
+.visit-record-summary > div { display: grid; gap: 5px; }
+.visit-record-summary span { color: var(--slate-500); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.visit-record-summary p { margin: 0; color: var(--slate-700); font-size: 12px; line-height: 1.45; }
 
 .appointment-form-panel { margin-top: 20px; }
 .appointment-list { display: grid; gap: 12px; }
@@ -424,6 +442,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .appointment-meta p { text-align: left; }
   .appointment-actions { justify-content: flex-start; }
   .appointment-tabs { overflow-x: auto; }
+  .clinical-records-grid, .visit-record-summary { grid-template-columns: 1fr; }
+  .record-form { grid-template-columns: 1fr; }
+  .record-form textarea, .record-form button { grid-column: auto; }
   .dashboard-panel .ready-badge { margin-top: 20px; }
   .registration-panel { padding: 22px; }
   .full-width, .form-actions { grid-column: auto; }

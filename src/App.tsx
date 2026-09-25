@@ -4,7 +4,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import './App.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { supabase } from './lib/supabase'
-import type { Appointment, Clinic, ClinicMembership, Patient, UserRole, Visit } from './types/domain'
+import type { Appointment, Clinic, ClinicMembership, Investigation, Patient, Prescription, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 
@@ -505,7 +505,121 @@ function ConsultationPanel({ appointment, patient, visit, clinicianLabel, onComp
     onCompleted()
   }
 
-  return <section className="registration-panel consultation-panel" aria-labelledby="consultation-heading"><div className="registration-heading"><p className="eyebrow">Active consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="panel-copy">File {patient.patient_number} · {appointment.service || 'Appointment consultation'} · Working as {clinicianLabel}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Leave consultation</button><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? 'Saving...' : 'Save draft'}</button><button type="button" disabled={saving || completing} onClick={() => { void completeConsultation() }}>{completing ? 'Completing...' : 'Complete Consultation'}</button></div></form>{message && <p className="inline-state" role="status">{message}</p>}{error && <p className="form-error" role="alert">{error}</p>}</section>
+  return <section className="registration-panel consultation-panel" aria-labelledby="consultation-heading"><div className="registration-heading"><p className="eyebrow">Active consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="panel-copy">File {patient.patient_number} · {appointment.service || 'Appointment consultation'} · Working as {clinicianLabel}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Leave consultation</button><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? 'Saving...' : 'Save draft'}</button><button type="button" disabled={saving || completing} onClick={() => { void completeConsultation() }}>{completing ? 'Completing...' : 'Complete Consultation'}</button></div></form><VisitClinicalRecordsPanel clinicId={visit.clinic_id} patientId={visit.patient_id} visitId={visit.id} doctorId={visit.doctor_id} disabled={saving || completing} />{message && <p className="inline-state" role="status">{message}</p>}{error && <p className="form-error" role="alert">{error}</p>}</section>
+}
+
+type PrescriptionFormValues = {
+  medicine: string
+  strength: string
+  dose: string
+  route: string
+  frequency: string
+  duration: string
+  quantity: string
+  instructions: string
+}
+
+type InvestigationFormValues = {
+  investigation_type: string
+  status: string
+  notes: string
+}
+
+const initialPrescriptionForm: PrescriptionFormValues = { medicine: '', strength: '', dose: '', route: '', frequency: '', duration: '', quantity: '', instructions: '' }
+const initialInvestigationForm: InvestigationFormValues = { investigation_type: '', status: '', notes: '' }
+
+function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, disabled }: { clinicId: string; patientId: string; visitId: string; doctorId: string; disabled: boolean }) {
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
+  const [investigations, setInvestigations] = useState<Investigation[]>([])
+  const [prescriptionForm, setPrescriptionForm] = useState<PrescriptionFormValues>(initialPrescriptionForm)
+  const [investigationForm, setInvestigationForm] = useState<InvestigationFormValues>(initialInvestigationForm)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadRecords() {
+      if (!supabase) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+      const [prescriptionResult, investigationResult] = await Promise.all([
+        supabase.from('prescriptions').select('*').eq('clinic_id', clinicId).eq('visit_id', visitId).order('created_at', { ascending: true }),
+        supabase.from('investigations').select('*').eq('clinic_id', clinicId).eq('visit_id', visitId).order('created_at', { ascending: true }),
+      ])
+      if (cancelled) return
+      setLoading(false)
+      if (prescriptionResult.error || investigationResult.error) {
+        setError('We could not load this visit\'s prescriptions and investigations.')
+        return
+      }
+      setPrescriptions((prescriptionResult.data ?? []) as Prescription[])
+      setInvestigations((investigationResult.data ?? []) as Investigation[])
+    }
+    void loadRecords()
+    return () => { cancelled = true }
+  }, [clinicId, visitId])
+
+  async function addPrescription(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!prescriptionForm.medicine.trim() || !supabase) {
+      setError(!supabase ? 'Supabase is not configured.' : 'Medicine is required.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const { data, error: insertError } = await supabase.from('prescriptions').insert({
+      clinic_id: clinicId,
+      patient_id: patientId,
+      visit_id: visitId,
+      prescribing_doctor_id: doctorId,
+      medicine: prescriptionForm.medicine.trim(),
+      strength: prescriptionForm.strength.trim() || null,
+      dose: prescriptionForm.dose.trim() || null,
+      route: prescriptionForm.route.trim() || null,
+      frequency: prescriptionForm.frequency.trim() || null,
+      duration: prescriptionForm.duration.trim() || null,
+      quantity: prescriptionForm.quantity.trim() ? Number(prescriptionForm.quantity) : null,
+      instructions: prescriptionForm.instructions.trim() || null,
+    } as never).select('*').single()
+    setSaving(false)
+    if (insertError || !data) {
+      setError('We could not add this prescription. Confirm that the consultation is still active.')
+      return
+    }
+    setPrescriptions((current) => [...current, data as Prescription])
+    setPrescriptionForm(initialPrescriptionForm)
+  }
+
+  async function addInvestigation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!investigationForm.investigation_type.trim() || !supabase) {
+      setError(!supabase ? 'Supabase is not configured.' : 'Investigation type is required.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const { data, error: insertError } = await supabase.from('investigations').insert({
+      clinic_id: clinicId,
+      patient_id: patientId,
+      visit_id: visitId,
+      requesting_doctor_id: doctorId,
+      investigation_type: investigationForm.investigation_type.trim(),
+      status: investigationForm.status.trim() || null,
+      notes: investigationForm.notes.trim() || null,
+    } as never).select('*').single()
+    setSaving(false)
+    if (insertError || !data) {
+      setError('We could not add this investigation. Confirm that the consultation is still active.')
+      return
+    }
+    setInvestigations((current) => [...current, data as Investigation])
+    setInvestigationForm(initialInvestigationForm)
+  }
+
+  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>Prescriptions and investigations</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <p className="inline-state" role="status">Loading visit records...</p>}{!loading && <div className="clinical-records-grid"><section><h4>Prescriptions</h4>{prescriptions.length === 0 ? <p className="inline-state">No prescriptions recorded.</p> : <div className="clinical-record-list">{prescriptions.map((prescription) => <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article>)}</div>}<form className="record-form" onSubmit={addPrescription}><input placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled} required /><input placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled} /><input placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled} /><input placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled} /><input placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled} /><input placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled} /><input type="number" min="0" step="any" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled} /><input placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled} /><button type="submit" disabled={disabled || saving}>{saving ? 'Adding...' : 'Add prescription'}</button></form></section><section><h4>Investigations</h4>{investigations.length === 0 ? <p className="inline-state">No investigations requested.</p> : <div className="clinical-record-list">{investigations.map((investigation) => <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article>)}</div>}<form className="record-form" onSubmit={addInvestigation}><input placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled} required /><input placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled} /><textarea placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? 'Adding...' : 'Add investigation'}</button></form></section></div>}{error && <p className="form-error" role="alert">{error}</p>}</section>
 }
 
 type PatientFormValues = {
@@ -717,6 +831,8 @@ function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (
 function PatientProfile({ clinicId, userId, role, clinicianLabel, patient, onBack, onUpdated }: { clinicId: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; onBack: () => void; onUpdated: (patient: Patient) => void }) {
   const [editing, setEditing] = useState(false)
   const [visits, setVisits] = useState<Visit[]>([])
+  const [prescriptions, setPrescriptions] = useState<Record<string, Prescription[]>>({})
+  const [investigations, setInvestigations] = useState<Record<string, Investigation[]>>({})
   const [visitLoading, setVisitLoading] = useState(true)
   const [visitError, setVisitError] = useState<string | null>(null)
   const [visitSuccess, setVisitSuccess] = useState<string | null>(null)
@@ -736,20 +852,24 @@ function PatientProfile({ clinicId, userId, role, clinicianLabel, patient, onBac
         return
       }
 
-      const { data, error: queryError } = await supabase
-        .from('visits')
-        .select('*')
-        .eq('clinic_id', clinicId)
-        .eq('patient_id', patient.id)
-        .order('visit_date', { ascending: false })
+      const [visitResult, prescriptionResult, investigationResult] = await Promise.all([
+        supabase.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('visit_date', { ascending: false }),
+        supabase.from('prescriptions').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
+        supabase.from('investigations').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
+      ])
 
       if (cancelled) return
       setVisitLoading(false)
-      if (queryError) {
+      if (visitResult.error || prescriptionResult.error || investigationResult.error) {
         setVisitError('We could not load this patient\'s visit history.')
         return
       }
-      setVisits((data ?? []) as Visit[])
+      const visitRows = (visitResult.data ?? []) as Visit[]
+      const prescriptionRows = (prescriptionResult.data ?? []) as Prescription[]
+      const investigationRows = (investigationResult.data ?? []) as Investigation[]
+      setVisits(visitRows)
+      setPrescriptions(Object.fromEntries(visitRows.map((visit) => [visit.id, prescriptionRows.filter((prescription) => prescription.visit_id === visit.id)])))
+      setInvestigations(Object.fromEntries(visitRows.map((visit) => [visit.id, investigationRows.filter((investigation) => investigation.visit_id === visit.id)])))
     }
 
     void loadVisits()
@@ -779,7 +899,7 @@ function PatientProfile({ clinicId, userId, role, clinicianLabel, patient, onBac
           {visitLoading && <p className="inline-state" role="status">Loading visit history...</p>}
           {!visitLoading && visitError && <p className="form-error" role="alert">{visitError}</p>}
           {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
-          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} visit={visit} isLatest={index === 0} clinicianLabel={visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician'} />)}</div>}
+          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} visit={visit} isLatest={index === 0} clinicianLabel={visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician'} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} />)}</div>}
         </section>
       </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}
     </section>
@@ -813,10 +933,6 @@ function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel,
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!form.chief_complaint.trim() && !form.clinical_notes.trim()) {
-      setError('Enter a chief complaint or clinical note to create the visit.')
-      return
-    }
     if (!supabase) {
       setError('Supabase is not configured.')
       return
@@ -862,8 +978,12 @@ function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel,
   )
 }
 
-function VisitCard({ visit, isLatest, clinicianLabel }: { visit: Visit; isLatest: boolean; clinicianLabel: string }) {
-  return <article className={`visit-card${isLatest ? ' latest' : ''}`}><div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div>{isLatest && <span className="latest-badge">Latest</span>}</div><div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div></article>
+function VisitCard({ visit, isLatest, clinicianLabel, prescriptions, investigations }: { visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[] }) {
+  return <article className={`visit-card${isLatest ? ' latest' : ''}`}><div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div>{isLatest && <span className="latest-badge">Latest</span>}</div><div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div><VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} /></article>
+}
+
+function VisitRecordsSummary({ prescriptions, investigations }: { prescriptions: Prescription[]; investigations: Investigation[] }) {
+  return <div className="visit-record-summary"><div><span>Prescriptions</span>{prescriptions.length === 0 ? <p>None recorded</p> : prescriptions.map((prescription) => <p key={prescription.id}><strong>{prescription.medicine}</strong>{prescription.dose ? ` · ${prescription.dose}` : ''}{prescription.frequency ? ` · ${prescription.frequency}` : ''}</p>)}</div><div><span>Investigations</span>{investigations.length === 0 ? <p>None requested</p> : investigations.map((investigation) => <p key={investigation.id}><strong>{investigation.investigation_type}</strong>{investigation.status ? ` · ${investigation.status}` : ''}</p>)}</div></div>
 }
 
 type AppointmentFormValues = {
