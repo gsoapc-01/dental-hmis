@@ -37,6 +37,38 @@ export interface Database {
         Args: { p_name: string }
         Returns: string
       }
+      start_consultation: {
+        Args: { p_appointment_id: string }
+        Returns: Visit
+      }
+      save_consultation: {
+        Args: {
+          p_visit_id: string
+          p_chief_complaint: string | null
+          p_hpi: string | null
+          p_examination: string | null
+          p_assessment: string | null
+          p_treatment_plan: string | null
+          p_clinical_notes: string | null
+          p_follow_up_date: string | null
+          p_follow_up_instructions: string | null
+        }
+        Returns: Visit
+      }
+      complete_consultation: {
+        Args: {
+          p_visit_id: string
+          p_chief_complaint: string | null
+          p_hpi: string | null
+          p_examination: string | null
+          p_assessment: string | null
+          p_treatment_plan: string | null
+          p_clinical_notes: string | null
+          p_follow_up_date: string | null
+          p_follow_up_instructions: string | null
+        }
+        Returns: Visit
+      }
     }
     Enums: Record<string, never>
   }

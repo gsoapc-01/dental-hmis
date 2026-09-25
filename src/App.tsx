@@ -288,6 +288,7 @@ function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId
   const [activeView, setActiveView] = useState<AppointmentView>('upcoming')
   const [transitioningId, setTransitioningId] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
+  const [activeConsultation, setActiveConsultation] = useState<{ appointment: Appointment; patient: PatientAppointmentSummary; visit: Visit } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -361,6 +362,35 @@ function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId
     setRefreshVersion((version) => version + 1)
   }
 
+  async function startConsultation(appointment: Appointment) {
+    if (role === 'receptionist' || appointment.status !== 'waiting' || (role === 'doctor' && appointment.doctor_id !== userId)) return
+    if (!supabase) {
+      setTransitionError('Supabase is not configured.')
+      return
+    }
+
+    setTransitioningId(appointment.id)
+    setTransitionError(null)
+    const { data, error: startError } = await supabase.rpc('start_consultation', { p_appointment_id: appointment.id } as never)
+    setTransitioningId(null)
+    if (startError || !data) {
+      setTransitionError('We could not start this consultation. Refresh the queue and try again.')
+      return
+    }
+    const patient = patients[appointment.patient_id]
+    if (!patient) {
+      setTransitionError('The consultation started, but the patient details could not be loaded.')
+      return
+    }
+    setActiveConsultation({ appointment: { ...appointment, status: 'in_progress' }, patient, visit: data as Visit })
+    setRefreshVersion((version) => version + 1)
+  }
+
+  function finishConsultation() {
+    setActiveConsultation(null)
+    setRefreshVersion((version) => version + 1)
+  }
+
   return (
     <div className="appointments-page">
       <div className="page-heading"><div><p className="eyebrow">Care coordination</p><h1>Appointments</h1><p className="panel-copy">Schedule and manage today\'s patient arrivals.</p></div><button className="button-secondary refresh-button" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button></div>
@@ -368,18 +398,114 @@ function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId
       {loading && <div className="state-panel" role="status">Loading upcoming appointments...</div>}
       {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
       {!loading && !error && transitionError && <div className="state-panel state-error" role="alert">{transitionError}</div>}
+      {activeConsultation && <ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} />}
       {!loading && !error && !hasAppointments && <div className="state-panel"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></div>}
       {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <div className="state-panel"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></div>}
-      {!loading && !error && displayedAppointments.length > 0 && <div className="appointment-list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} onTransition={transitionAppointment} transitioning={transitioningId === appointment.id} />)}</div>}
+      {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} transitioning={transitioningId === appointment.id} />)}</div>}
     </div>
   )
 }
 
-function AppointmentCard({ appointment, patient, doctorName, onTransition, transitioning }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string; onTransition: (appointment: Appointment, nextStatus: 'arrived' | 'waiting') => void; transitioning: boolean }) {
+function AppointmentCard({ appointment, patient, doctorName, role, userId, onTransition, onStartConsultation, transitioning }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string; role: UserRole; userId: string; onTransition: (appointment: Appointment, nextStatus: 'arrived' | 'waiting') => void; onStartConsultation: (appointment: Appointment) => void; transitioning: boolean }) {
   const canCheckIn = appointment.status === 'scheduled' || appointment.status === 'confirmed'
   const canSendToWaiting = appointment.status === 'arrived'
+  const canStartConsultation = role !== 'receptionist' && appointment.status === 'waiting' && (role === 'admin' || appointment.doctor_id === userId)
 
-  return <article className="appointment-card"><div className="appointment-date-block"><span>{formatDate(appointment.appointment_date)}</span><strong>{formatTime(appointment.start_time)}</strong><small>{formatTime(appointment.end_time)}</small></div><div className="appointment-main"><p className="appointment-patient">{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</p><p className="appointment-file">File {patient?.patient_number ?? '-'}</p>{appointment.service && <p className="appointment-reason">{appointment.service}</p>}</div><div className="appointment-meta"><p>{doctorName ?? 'Doctor unavailable'}</p><span className={`appointment-status status-${appointment.status}`}>{formatStatus(appointment.status)}</span><div className="appointment-actions">{canCheckIn && <button onClick={() => onTransition(appointment, 'arrived')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Check In'}</button>}{canSendToWaiting && <button onClick={() => onTransition(appointment, 'waiting')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Send to Waiting'}</button>}</div></div></article>
+  return <article className="appointment-card"><div className="appointment-date-block"><span>{formatDate(appointment.appointment_date)}</span><strong>{formatTime(appointment.start_time)}</strong><small>{formatTime(appointment.end_time)}</small></div><div className="appointment-main"><p className="appointment-patient">{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</p><p className="appointment-file">File {patient?.patient_number ?? '-'}</p>{appointment.service && <p className="appointment-reason">{appointment.service}</p>}</div><div className="appointment-meta"><p>{doctorName ?? 'Doctor unavailable'}</p><span className={`appointment-status status-${appointment.status}`}>{formatStatus(appointment.status)}</span><div className="appointment-actions">{canCheckIn && <button onClick={() => onTransition(appointment, 'arrived')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Check In'}</button>}{canSendToWaiting && <button onClick={() => onTransition(appointment, 'waiting')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Send to Waiting'}</button>}{canStartConsultation && <button onClick={() => onStartConsultation(appointment)} disabled={transitioning || !patient} type="button">{transitioning ? 'Starting...' : 'Start Consultation'}</button>}</div></div></article>
+}
+
+type ConsultationFormValues = {
+  chief_complaint: string
+  hpi: string
+  examination: string
+  assessment: string
+  treatment_plan: string
+  clinical_notes: string
+  follow_up_date: string
+  follow_up_instructions: string
+}
+
+function consultationFormFromVisit(visit: Visit): ConsultationFormValues {
+  return {
+    chief_complaint: visit.chief_complaint ?? '',
+    hpi: visit.hpi ?? '',
+    examination: visit.examination ?? '',
+    assessment: visit.assessment ?? '',
+    treatment_plan: visit.treatment_plan ?? '',
+    clinical_notes: visit.clinical_notes ?? '',
+    follow_up_date: visit.follow_up_date ?? '',
+    follow_up_instructions: visit.follow_up_instructions ?? '',
+  }
+}
+
+function ConsultationPanel({ appointment, patient, visit, clinicianLabel, onCompleted, onCancel }: { appointment: Appointment; patient: PatientAppointmentSummary; visit: Visit; clinicianLabel: string; onCompleted: () => void; onCancel: () => void }) {
+  const [form, setForm] = useState<ConsultationFormValues>(() => consultationFormFromVisit(visit))
+  const [saving, setSaving] = useState(false)
+  const [completing, setCompleting] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  function updateField(field: keyof ConsultationFormValues, value: string) {
+    setForm((current) => ({ ...current, [field]: value }))
+    setMessage(null)
+  }
+
+  function rpcPayload() {
+    return {
+      p_visit_id: visit.id,
+      p_chief_complaint: form.chief_complaint.trim() || null,
+      p_hpi: form.hpi.trim() || null,
+      p_examination: form.examination.trim() || null,
+      p_assessment: form.assessment.trim() || null,
+      p_treatment_plan: form.treatment_plan.trim() || null,
+      p_clinical_notes: form.clinical_notes.trim() || null,
+      p_follow_up_date: form.follow_up_date || null,
+      p_follow_up_instructions: form.follow_up_instructions.trim() || null,
+    }
+  }
+
+  async function saveDraft() {
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return false
+    }
+    setSaving(true)
+    setError(null)
+    setMessage(null)
+    const { error: saveError } = await supabase.rpc('save_consultation', rpcPayload() as never)
+    setSaving(false)
+    if (saveError) {
+      setError('We could not save this consultation. Refresh and try again.')
+      return false
+    }
+    setMessage('Draft saved.')
+    return true
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await saveDraft()
+  }
+
+  async function completeConsultation() {
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+    setCompleting(true)
+    setError(null)
+    setMessage(null)
+    const { error: completeError } = await supabase.rpc('complete_consultation', rpcPayload() as never)
+    setCompleting(false)
+    if (completeError) {
+      setError('We could not complete this consultation. Refresh and try again.')
+      return
+    }
+    setMessage('Consultation completed and added to visit history.')
+    onCompleted()
+  }
+
+  return <section className="registration-panel consultation-panel" aria-labelledby="consultation-heading"><div className="registration-heading"><p className="eyebrow">Active consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="panel-copy">File {patient.patient_number} · {appointment.service || 'Appointment consultation'} · Working as {clinicianLabel}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Leave consultation</button><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? 'Saving...' : 'Save draft'}</button><button type="button" disabled={saving || completing} onClick={() => { void completeConsultation() }}>{completing ? 'Completing...' : 'Complete Consultation'}</button></div></form>{message && <p className="inline-state" role="status">{message}</p>}{error && <p className="form-error" role="alert">{error}</p>}</section>
 }
 
 type PatientFormValues = {
