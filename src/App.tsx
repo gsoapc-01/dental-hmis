@@ -217,7 +217,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : <DashboardView clinicName={context.clinic.name} onOpenPatients={() => setActiveModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : <DashboardView clinicName={context.clinic.name} onOpenPatients={() => setActiveModule('Patients')} />}
       </section>
     </main>
   )
@@ -275,12 +275,18 @@ async function loadDoctorOptions(clinicId: string): Promise<{ doctors: DoctorOpt
   }
 }
 
-function AppointmentsView({ clinicId }: { clinicId: string }) {
+type AppointmentView = 'upcoming' | 'today' | 'waiting'
+
+function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId: string; role: UserRole }) {
   const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [waitingAppointments, setWaitingAppointments] = useState<Appointment[]>([])
   const [patients, setPatients] = useState<Record<string, PatientAppointmentSummary>>({})
   const [doctors, setDoctors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [transitionError, setTransitionError] = useState<string | null>(null)
+  const [activeView, setActiveView] = useState<AppointmentView>('upcoming')
+  const [transitioningId, setTransitioningId] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
 
   useEffect(() => {
@@ -294,25 +300,29 @@ function AppointmentsView({ clinicId }: { clinicId: string }) {
       }
 
       setLoading(true)
+      setTransitionError(null)
       const today = new Date().toISOString().slice(0, 10)
-      const [appointmentResult, patientResult, doctorResult] = await Promise.all([
+      const [appointmentResult, waitingResult, patientResult, doctorResult] = await Promise.all([
         supabase.from('appointments').select('*').eq('clinic_id', clinicId).gte('appointment_date', today).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
+        supabase.from('appointments').select('*').eq('clinic_id', clinicId).eq('status', 'waiting').order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
         supabase.from('patients').select('id, patient_number, first_name, middle_name, last_name').eq('clinic_id', clinicId),
         loadDoctorOptions(clinicId),
       ])
 
       if (cancelled) return
       setLoading(false)
-      if (appointmentResult.error || patientResult.error || doctorResult.error) {
-        setError(appointmentResult.error ? 'We could not load upcoming appointments.' : patientResult.error ? 'We could not load appointment patient details.' : doctorResult.error)
+      if (appointmentResult.error || waitingResult.error || patientResult.error) {
+        setError(appointmentResult.error || waitingResult.error ? 'We could not load appointments.' : 'We could not load appointment patient details.')
         return
       }
 
       const patientMap = Object.fromEntries(((patientResult.data ?? []) as PatientAppointmentSummary[]).map((patient) => [patient.id, patient]))
       const doctorMap = Object.fromEntries(doctorResult.doctors.map((doctor) => [doctor.id, doctor.name]))
       setAppointments((appointmentResult.data ?? []) as Appointment[])
+      setWaitingAppointments((waitingResult.data ?? []) as Appointment[])
       setPatients(patientMap)
       setDoctors(doctorMap)
+      if (doctorResult.error) setTransitionError(doctorResult.error)
     }
 
     void loadAppointments()
@@ -321,19 +331,55 @@ function AppointmentsView({ clinicId }: { clinicId: string }) {
     }
   }, [clinicId, refreshVersion])
 
+  const today = new Date().toISOString().slice(0, 10)
+  const todayAppointments = appointments.filter((appointment) => appointment.appointment_date === today)
+  const visibleWaitingAppointments = waitingAppointments.filter((appointment) => role !== 'doctor' || appointment.doctor_id === userId)
+  const displayedAppointments = activeView === 'today' ? todayAppointments : activeView === 'waiting' ? visibleWaitingAppointments : appointments
+  const hasAppointments = appointments.length > 0 || visibleWaitingAppointments.length > 0
+
+  async function transitionAppointment(appointment: Appointment, nextStatus: 'arrived' | 'waiting') {
+    const expectedStatus = nextStatus === 'arrived' ? ['scheduled', 'confirmed'] : ['arrived']
+    if (!expectedStatus.includes(appointment.status)) return
+    if (!supabase) {
+      setTransitionError('Supabase is not configured.')
+      return
+    }
+
+    setTransitioningId(appointment.id)
+    setTransitionError(null)
+    const { error: updateError } = await supabase
+      .from('appointments')
+      .update({ status: nextStatus } as never)
+      .eq('id', appointment.id)
+      .eq('clinic_id', clinicId)
+      .in('status', expectedStatus)
+    setTransitioningId(null)
+    if (updateError) {
+      setTransitionError('We could not update the appointment status. Please refresh and try again.')
+      return
+    }
+    setRefreshVersion((version) => version + 1)
+  }
+
   return (
     <div className="appointments-page">
-      <div className="page-heading"><div><p className="eyebrow">Care coordination</p><h1>Appointments</h1><p className="panel-copy">Upcoming appointments for your clinic.</p></div><button className="button-secondary refresh-button" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button></div>
+      <div className="page-heading"><div><p className="eyebrow">Care coordination</p><h1>Appointments</h1><p className="panel-copy">Schedule and manage today\'s patient arrivals.</p></div><button className="button-secondary refresh-button" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button></div>
+      <div className="appointment-tabs" role="tablist" aria-label="Appointment views"><button className={activeView === 'upcoming' ? 'active' : ''} onClick={() => setActiveView('upcoming')} role="tab" type="button">Upcoming <span>{appointments.length}</span></button><button className={activeView === 'today' ? 'active' : ''} onClick={() => setActiveView('today')} role="tab" type="button">Today <span>{todayAppointments.length}</span></button><button className={activeView === 'waiting' ? 'active' : ''} onClick={() => setActiveView('waiting')} role="tab" type="button">Waiting queue <span>{visibleWaitingAppointments.length}</span></button></div>
       {loading && <div className="state-panel" role="status">Loading upcoming appointments...</div>}
       {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-      {!loading && !error && appointments.length === 0 && <div className="state-panel"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></div>}
-      {!loading && !error && appointments.length > 0 && <div className="appointment-list">{appointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} />)}</div>}
+      {!loading && !error && transitionError && <div className="state-panel state-error" role="alert">{transitionError}</div>}
+      {!loading && !error && !hasAppointments && <div className="state-panel"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></div>}
+      {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <div className="state-panel"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></div>}
+      {!loading && !error && displayedAppointments.length > 0 && <div className="appointment-list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} onTransition={transitionAppointment} transitioning={transitioningId === appointment.id} />)}</div>}
     </div>
   )
 }
 
-function AppointmentCard({ appointment, patient, doctorName }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string }) {
-  return <article className="appointment-card"><div className="appointment-date-block"><span>{formatDate(appointment.appointment_date)}</span><strong>{formatTime(appointment.start_time)}</strong><small>{formatTime(appointment.end_time)}</small></div><div className="appointment-main"><p className="appointment-patient">{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</p><p className="appointment-file">File {patient?.patient_number ?? '-'}</p>{appointment.service && <p className="appointment-reason">{appointment.service}</p>}</div><div className="appointment-meta"><p>{doctorName ?? 'Doctor unavailable'}</p><span className="appointment-status">{formatStatus(appointment.status)}</span></div></article>
+function AppointmentCard({ appointment, patient, doctorName, onTransition, transitioning }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string; onTransition: (appointment: Appointment, nextStatus: 'arrived' | 'waiting') => void; transitioning: boolean }) {
+  const canCheckIn = appointment.status === 'scheduled' || appointment.status === 'confirmed'
+  const canSendToWaiting = appointment.status === 'arrived'
+
+  return <article className="appointment-card"><div className="appointment-date-block"><span>{formatDate(appointment.appointment_date)}</span><strong>{formatTime(appointment.start_time)}</strong><small>{formatTime(appointment.end_time)}</small></div><div className="appointment-main"><p className="appointment-patient">{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</p><p className="appointment-file">File {patient?.patient_number ?? '-'}</p>{appointment.service && <p className="appointment-reason">{appointment.service}</p>}</div><div className="appointment-meta"><p>{doctorName ?? 'Doctor unavailable'}</p><span className={`appointment-status status-${appointment.status}`}>{formatStatus(appointment.status)}</span><div className="appointment-actions">{canCheckIn && <button onClick={() => onTransition(appointment, 'arrived')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Check In'}</button>}{canSendToWaiting && <button onClick={() => onTransition(appointment, 'waiting')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Send to Waiting'}</button>}</div></div></article>
 }
 
 type PatientFormValues = {

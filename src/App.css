@@ -227,6 +227,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .dashboard-intro .panel-copy, .page-heading .panel-copy { margin-bottom: 0; }
 .refresh-button { width: auto; min-width: 92px; color: var(--slate-700); border-color: var(--slate-300); background: var(--surface); }
+.appointment-tabs { display: flex; gap: 4px; margin-bottom: 18px; padding: 4px; border: 1px solid var(--slate-200); border-radius: 9px; background: #eef3f5; }
+.appointment-tabs button { padding: 9px 13px; border: 0; border-radius: 6px; color: var(--slate-500); background: transparent; cursor: pointer; font-size: 12px; font-weight: 800; }
+.appointment-tabs button:hover { color: var(--slate-900); }
+.appointment-tabs button.active { color: var(--navy-950); background: var(--surface); box-shadow: 0 2px 6px rgba(16, 43, 68, 0.08); }
+.appointment-tabs button span { margin-left: 5px; color: var(--blue-600); }
 
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
 
@@ -354,6 +359,13 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .appointment-meta { display: grid; justify-items: end; gap: 9px; }
 .appointment-meta p { margin: 0; color: var(--slate-700); font-size: 12px; font-weight: 700; text-align: right; }
 .appointment-status { padding: 5px 9px; border-radius: 999px; color: #176447; background: #e2f4ea; font-size: 10px; font-weight: 800; text-transform: capitalize; }
+.status-scheduled, .status-confirmed { color: #245b77; background: #e6f4f8; }
+.status-arrived { color: #8a5a12; background: #fff4d6; }
+.status-waiting { color: #7a3c89; background: #f5e9f8; }
+.appointment-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.appointment-actions button { padding: 7px 9px; border: 1px solid #abd8e3; border-radius: 6px; color: var(--blue-600); background: #f5fbfc; cursor: pointer; font-size: 11px; font-weight: 800; }
+.appointment-actions button:hover { background: var(--blue-100); }
+.appointment-actions button:disabled { cursor: not-allowed; opacity: 0.6; }
 
 .patient-form textarea {
   width: 100%;
@@ -410,6 +422,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .appointment-date-block { padding: 0 0 12px; border-right: 0; border-bottom: 1px solid var(--slate-200); }
   .appointment-meta { justify-items: start; }
   .appointment-meta p { text-align: left; }
+  .appointment-actions { justify-content: flex-start; }
+  .appointment-tabs { overflow-x: auto; }
   .dashboard-panel .ready-badge { margin-top: 20px; }
   .registration-panel { padding: 22px; }
   .full-width, .form-actions { grid-column: auto; }
