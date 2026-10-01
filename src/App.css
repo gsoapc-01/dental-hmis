@@ -344,6 +344,36 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .visit-fields span { color: var(--slate-500); font-size: 11px; font-weight: 800; text-transform: uppercase; }
 .visit-fields p { margin: 4px 0 0; color: var(--slate-700); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
 .visit-form-panel { margin-top: 20px; }
+.billing-form-panel { margin-top: 20px; }
+.visit-invoices { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--slate-200); }
+.visit-invoices .section-heading { align-items: center; margin-bottom: 10px; }
+.visit-invoices .section-heading > div { display: grid; gap: 4px; }
+.visit-invoices .section-heading span, .invoice-header span, .invoice-totals span, .payment-list > span, .receipt-panel > div span { color: var(--slate-500); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.visit-invoices h4 { margin: 0; color: var(--navy-950); font-size: 15px; }
+.inline-button { width: auto; min-height: 34px; padding: 7px 10px; color: var(--slate-700); border-color: var(--slate-300); background: var(--surface); font-size: 11px; }
+.invoice-card { display: grid; gap: 14px; padding: 14px; border: 1px solid var(--slate-200); border-radius: 8px; background: var(--surface); }
+.invoice-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.invoice-header > div { display: grid; gap: 4px; }
+.invoice-header strong { color: var(--navy-950); font-size: 14px; }
+.invoice-status { padding: 5px 8px; border-radius: 999px; color: #245b77; background: #e6f4f8; font-size: 10px; text-transform: capitalize; }
+.invoice-partially_paid { color: #8a5a12; background: #fff4d6; }
+.invoice-paid { color: #176447; background: #e2f4ea; }
+.invoice-cancelled, .invoice-void { color: var(--danger); background: #fff0ee; }
+.invoice-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.invoice-totals > div { display: grid; gap: 4px; }
+.invoice-totals strong { color: var(--navy-950); font-size: 13px; }
+.payment-list { display: grid; gap: 5px; padding-top: 12px; border-top: 1px solid var(--slate-200); }
+.payment-list p { margin: 0; color: var(--slate-700); font-size: 12px; }
+.payment-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding-top: 12px; border-top: 1px solid var(--slate-200); }
+.payment-form input, .payment-form select { min-height: 38px; padding: 8px 9px; border: 1px solid var(--slate-300); border-radius: 6px; color: var(--slate-900); background: var(--surface); font-size: 12px; }
+.payment-form input:nth-of-type(2), .payment-form button, .payment-form .form-error { grid-column: 1 / -1; }
+.payment-form button { min-height: 38px; border: 0; border-radius: 6px; color: #fff; background: var(--blue-600); cursor: pointer; font-size: 12px; font-weight: 800; }
+.payment-form button:disabled { cursor: not-allowed; opacity: 0.6; }
+.receipt-panel { display: grid; gap: 6px; padding: 12px; border: 1px solid #cde8d8; background: #f1fbf5; }
+.receipt-panel > div { display: flex; justify-content: space-between; gap: 12px; }
+.receipt-panel > div strong { color: var(--success); font-size: 13px; }
+.receipt-panel p { margin: 0; color: var(--slate-700); font-size: 12px; }
+.receipt-panel .inline-button { justify-self: start; }
 .clinical-records-panel { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--slate-200); }
 .clinical-records-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .clinical-records-grid > section { padding: 16px; border: 1px solid var(--slate-200); border-radius: 8px; background: #fbfcfd; }
@@ -445,6 +475,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .clinical-records-grid, .visit-record-summary { grid-template-columns: 1fr; }
   .record-form { grid-template-columns: 1fr; }
   .record-form textarea, .record-form button { grid-column: auto; }
+  .invoice-totals, .payment-form { grid-template-columns: 1fr; }
+  .payment-form input:nth-of-type(2), .payment-form button, .payment-form .form-error { grid-column: auto; }
   .dashboard-panel .ready-badge { margin-top: 20px; }
   .registration-panel { padding: 22px; }
   .full-width, .form-actions { grid-column: auto; }

@@ -69,6 +69,14 @@ export interface Database {
         }
         Returns: Visit
       }
+      create_invoice: {
+        Args: { p_clinic_id: string; p_patient_id: string; p_visit_id: string | null; p_total: number }
+        Returns: Invoice
+      }
+      record_payment: {
+        Args: { p_invoice_id: string; p_amount: number; p_payment_method: string; p_reference: string | null }
+        Returns: Payment
+      }
     }
     Enums: Record<string, never>
   }
