@@ -195,6 +195,7 @@ function ClinicSetupScreen({ user }: { user: User }) {
 function ClinicShell({ context }: { context: MembershipContext }) {
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [activeModule, setActiveModule] = useState('Dashboard')
+  const canViewFinance = context.membership.role === 'admin' || context.membership.role === 'receptionist'
 
   async function handleLogout() {
     const error = await signOut()
@@ -207,10 +208,12 @@ function ClinicShell({ context }: { context: MembershipContext }) {
         <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{context.clinic.name}</p></div></div>
         <nav aria-label="Clinic modules">
           <p className="nav-label">Workspace</p>
-          {['Dashboard', 'Clinical Visits'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
+          <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => setActiveModule('Dashboard')} type="button"><span className="nav-dot" />Dashboard</button>
+          <span className="nav-item"><span className="nav-dot" />Clinical Visits</span>
           <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => setActiveModule('Appointments')} type="button"><span className="nav-dot" />Appointments</button>
           <p className="nav-label nav-label-spaced">Management</p>
-          {(context.membership.role === 'admin' || context.membership.role === 'receptionist') && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => setActiveModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
+          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => setActiveModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
+          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => setActiveModule('Reports')} type="button"><span className="nav-dot" />Reports</button>}
           {['Prescriptions', 'Investigations'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
           <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => setActiveModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
         </nav>
@@ -218,20 +221,399 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : activeModule === 'Billing' && (context.membership.role === 'admin' || context.membership.role === 'receptionist') ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} /> : <DashboardView clinicName={context.clinic.name} onOpenPatients={() => setActiveModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => setActiveModule('Patients')} />}
       </section>
     </main>
   )
 }
 
-function DashboardView({ clinicName, onOpenPatients }: { clinicName: string; onOpenPatients: () => void }) {
+type DashboardAppointment = Pick<Appointment, 'id' | 'patient_id' | 'doctor_id' | 'appointment_date' | 'start_time' | 'end_time' | 'service' | 'status'>
+type DashboardPatient = Pick<Patient, 'id' | 'patient_number' | 'first_name' | 'middle_name' | 'last_name'>
+type DashboardPayment = Pick<Payment, 'id' | 'clinic_id' | 'invoice_id' | 'patient_id' | 'amount' | 'payment_method' | 'payment_date'>
+type DashboardInvoice = Pick<Invoice, 'id' | 'patient_id' | 'invoice_number' | 'currency' | 'status' | 'balance'>
+type InvoiceBalanceSummary = Pick<Invoice, 'id' | 'currency' | 'status' | 'balance'>
+type ReportVisit = Pick<Visit, 'id' | 'doctor_id' | 'appointment_id'>
+
+type DashboardData = {
+  patientCount: number | null
+  appointments: DashboardAppointment[]
+  patients: Record<string, DashboardPatient>
+  revenueByCurrency: Record<string, number>
+  outstandingByCurrency: Record<string, number>
+  recentPayments: DashboardPayment[]
+  invoices: Record<string, DashboardInvoice>
+}
+
+function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPatients }: { clinicId: string; clinicName: string; timezone: string; role: UserRole; userId: string; onOpenPatients: () => void }) {
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const today = getClinicLocalDate(new Date(), timezone)
+  const canViewFinance = role === 'admin' || role === 'receptionist'
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadDashboard() {
+      if (!supabase) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+
+      setLoading(true)
+      setError(null)
+      let appointmentQuery = supabase
+        .from('appointments')
+        .select('id, patient_id, doctor_id, appointment_date, start_time, end_time, service, status')
+        .eq('clinic_id', clinicId)
+        .eq('appointment_date', today)
+        .order('start_time', { ascending: true })
+      if (role === 'doctor') appointmentQuery = appointmentQuery.eq('doctor_id', userId)
+
+      const [appointmentResult, patientCountResult] = await Promise.all([
+        appointmentQuery,
+        canViewFinance
+          ? supabase.from('patients').select('id', { count: 'exact', head: true }).eq('clinic_id', clinicId)
+          : Promise.resolve(null),
+      ])
+      if (cancelled) return
+      if (appointmentResult.error || patientCountResult?.error) {
+        setLoading(false)
+        setError('We could not load the clinic dashboard.')
+        return
+      }
+
+      const appointments = (appointmentResult.data ?? []) as DashboardAppointment[]
+      const patientCount = patientCountResult?.count ?? null
+      let todayPayments: DashboardPayment[] = []
+      let recentPayments: DashboardPayment[] = []
+      let openInvoices: DashboardInvoice[] = []
+      let invoiceMap: Record<string, DashboardInvoice> = {}
+      let revenueByCurrency: Record<string, number> = {}
+      let outstandingByCurrency: Record<string, number> = {}
+
+      if (canViewFinance) {
+        const bounds = getClinicDateBounds(today, today, timezone)
+        const [todayPaymentResult, recentPaymentResult, openInvoiceResult] = await Promise.all([
+          supabase.from('payments').select('id, clinic_id, invoice_id, patient_id, amount, payment_method, payment_date').eq('clinic_id', clinicId).gte('payment_date', bounds.start).lt('payment_date', bounds.end).order('payment_date', { ascending: false }),
+          supabase.from('payments').select('id, clinic_id, invoice_id, patient_id, amount, payment_method, payment_date').eq('clinic_id', clinicId).order('payment_date', { ascending: false }).limit(8),
+          supabase.from('invoices').select('id, patient_id, invoice_number, currency, status, balance').eq('clinic_id', clinicId).in('status', ['draft', 'partially_paid']).gt('balance', 0),
+        ])
+        if (cancelled) return
+        if (todayPaymentResult.error || recentPaymentResult.error || openInvoiceResult.error) {
+          setLoading(false)
+          setError('We could not load clinic billing summaries.')
+          return
+        }
+
+        todayPayments = (todayPaymentResult.data ?? []) as DashboardPayment[]
+        recentPayments = (recentPaymentResult.data ?? []) as DashboardPayment[]
+        openInvoices = (openInvoiceResult.data ?? []) as DashboardInvoice[]
+        const invoiceIds = [...new Set([...todayPayments, ...recentPayments].map((payment) => payment.invoice_id))]
+        if (invoiceIds.length > 0) {
+          const { data: paymentInvoiceRows, error: invoiceError } = await supabase.from('invoices').select('id, patient_id, invoice_number, currency, status, balance').eq('clinic_id', clinicId).in('id', invoiceIds)
+          if (cancelled) return
+          if (invoiceError) {
+            setLoading(false)
+            setError('We could not load invoice currencies for payment summaries.')
+            return
+          }
+          invoiceMap = Object.fromEntries(((paymentInvoiceRows ?? []) as DashboardInvoice[]).map((invoice) => [invoice.id, invoice]))
+        }
+        openInvoices.forEach((invoice) => { invoiceMap[invoice.id] = invoice })
+        revenueByCurrency = sumPaymentsByCurrency(todayPayments, invoiceMap)
+        outstandingByCurrency = sumBalancesByCurrency(openInvoices)
+      }
+
+      const patientIds = [...new Set([
+        ...appointments.map((appointment) => appointment.patient_id),
+        ...recentPayments.map((payment) => payment.patient_id),
+      ])]
+      let patients: Record<string, DashboardPatient> = {}
+      if (patientIds.length > 0) {
+        const { data: patientRows, error: patientError } = await supabase.from('patients').select('id, patient_number, first_name, middle_name, last_name').eq('clinic_id', clinicId).in('id', patientIds)
+        if (cancelled) return
+        if (patientError) {
+          setLoading(false)
+          setError('We could not load patient names for the dashboard.')
+          return
+        }
+        patients = Object.fromEntries(((patientRows ?? []) as DashboardPatient[]).map((patient) => [patient.id, patient]))
+      }
+
+      setData({ patientCount, appointments, patients, revenueByCurrency, outstandingByCurrency, recentPayments, invoices: invoiceMap })
+      setLoading(false)
+    }
+
+    void loadDashboard()
+    return () => { cancelled = true }
+  }, [canViewFinance, clinicId, role, today, timezone, userId])
+
+  const appointments = data?.appointments ?? []
+  const waitingAppointments = appointments.filter((appointment) => appointment.status === 'waiting')
+  const inProgressAppointments = appointments.filter((appointment) => appointment.status === 'in_progress')
+  const completedAppointments = appointments.filter((appointment) => appointment.status === 'completed')
+  const currencyTotals = (totals: Record<string, number>) => Object.entries(totals).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <span key={currency}>{formatMoney(amount, currency)}</span>)
+  const patientName = (patientId: string) => {
+    const patient = data?.patients[patientId]
+    return patient ? `${[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · ${patient.patient_number}` : 'Patient details unavailable'
+  }
+
   return (
     <div className="dashboard-page">
-      <div className="dashboard-intro"><div><p className="eyebrow">Good to see you</p><h1>{clinicName}</h1><p className="panel-copy">Your clinic workspace is ready for today.</p></div><button className="primary-action" onClick={onOpenPatients} type="button">Open patient list</button></div>
-      <div className="summary-grid"><section className="summary-card summary-card-accent"><p className="card-label">Patients</p><p className="card-value">Active workspace</p><p className="card-note">Manage registrations from the patient list.</p></section><section className="summary-card"><p className="card-label">Appointments</p><p className="card-value">Coming soon</p><p className="card-note">Appointment workflows are not enabled yet.</p></section><section className="summary-card"><p className="card-label">Clinical visits</p><p className="card-value">Coming soon</p><p className="card-note">Clinical documentation will appear here.</p></section></div>
-      <section className="dashboard-panel"><div><p className="eyebrow">Workspace status</p><h2>Everything is ready</h2><p className="panel-copy">Use Patients to register and review the people receiving care at {clinicName}.</p></div><span className="ready-badge"><span className="status-indicator" />Operational</span></section>
+      <div className="dashboard-intro"><div><p className="eyebrow">Clinic operations · {today}</p><h1>{clinicName}</h1><p className="panel-copy">Today’s schedule and workload.</p></div><button className="primary-action" onClick={onOpenPatients} type="button">Open patient list</button></div>
+      {error && <div className="state-panel state-error" role="alert">{error}</div>}
+      {loading && <p className="inline-state" role="status">Loading dashboard...</p>}
+      {!loading && !error && data && <>
+        <div className="summary-grid dashboard-metrics">
+          {canViewFinance ? <>
+            <DashboardMetric label="Total Patients" value={String(data.patientCount ?? 0)} />
+            <DashboardMetric label="Today's Appointments" value={String(appointments.length)} />
+            <DashboardMetric label="Waiting Patients" value={String(new Set(waitingAppointments.map((appointment) => appointment.patient_id)).size)} />
+            <DashboardMetric label="Consultations In Progress" value={String(inProgressAppointments.length)} />
+            <DashboardMetric label="Completed Today" value={String(completedAppointments.length)} />
+            <DashboardMetric label="Today's Payments" value={currencyTotals(data.revenueByCurrency)} />
+            <DashboardMetric label="Current Outstanding Balance" value={currencyTotals(data.outstandingByCurrency)} />
+          </> : <>
+            <DashboardMetric label="My Appointments Today" value={String(appointments.length)} />
+            <DashboardMetric label="My Waiting Patients" value={String(new Set(waitingAppointments.map((appointment) => appointment.patient_id)).size)} />
+            <DashboardMetric label="My Consultations In Progress" value={String(inProgressAppointments.length)} />
+            <DashboardMetric label="My Completed Appointments Today" value={String(completedAppointments.length)} />
+          </>}
+        </div>
+        <div className="dashboard-sections">
+          <DashboardSection title="Today's Schedule">
+            {appointments.length === 0 ? <p className="inline-state">No appointments scheduled today.</p> : <div className="dashboard-row-list">{appointments.map((appointment) => <div className="dashboard-row" key={appointment.id}><span>{formatTime(appointment.start_time)}</span><strong>{patientName(appointment.patient_id)}</strong><span className={`appointment-status status-${appointment.status}`}>{formatStatus(appointment.status)}</span>{appointment.service && <small>{appointment.service}</small>}</div>)}</div>}
+          </DashboardSection>
+          <DashboardSection title="Waiting Queue">
+            {waitingAppointments.length === 0 ? <p className="inline-state">No patients waiting.</p> : <div className="dashboard-row-list">{waitingAppointments.map((appointment) => <div className="dashboard-row" key={appointment.id}><span>{formatTime(appointment.start_time)}</span><strong>{patientName(appointment.patient_id)}</strong>{appointment.service && <small>{appointment.service}</small>}</div>)}</div>}
+          </DashboardSection>
+          {canViewFinance && <DashboardSection title="Recent Payments">
+            {data.recentPayments.length === 0 ? <p className="inline-state">No payments recorded yet.</p> : <div className="dashboard-row-list">{data.recentPayments.map((payment) => {
+              const invoice = data.invoices[payment.invoice_id]
+              return <div className="dashboard-row" key={payment.id}><span>{formatDateTimeInTimezone(payment.payment_date, timezone)}</span><strong>{patientName(payment.patient_id)}</strong><span>{invoice ? formatMoney(payment.amount, invoice.currency) : 'Currency unavailable'}</span><small>{invoice?.invoice_number ?? ''} · {formatStatus(payment.payment_method)}</small></div>
+            })}</div>}
+          </DashboardSection>}
+        </div>
+      </>}
     </div>
   )
+}
+
+function DashboardMetric({ label, value }: { label: string; value: React.ReactNode }) {
+  return <section className="summary-card"><p className="card-label">{label}</p><p className="card-value">{value}</p></section>
+}
+
+function DashboardSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="dashboard-list-section"><div className="section-heading"><h3>{title}</h3></div>{children}</section>
+}
+
+type ReportsData = {
+  registrations: number
+  appointments: DashboardAppointment[]
+  visits: ReportVisit[]
+  paymentsByCurrency: Record<string, number>
+  paymentsByMethod: Record<string, Record<string, number>>
+  outstandingByCurrency: Record<string, number>
+  doctorActivity: Array<{ id: string; label: string; appointments: number; visits: number }>
+}
+
+function ReportsView({ clinicId, timezone }: { clinicId: string; timezone: string }) {
+  const today = getClinicLocalDate(new Date(), timezone)
+  const [startDate, setStartDate] = useState(`${today.slice(0, 7)}-01`)
+  const [endDate, setEndDate] = useState(today)
+  const [data, setData] = useState<ReportsData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const effectiveStart = startDate || `${(endDate || today).slice(0, 7)}-01`
+  const effectiveEnd = endDate || today
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadReports() {
+      if (effectiveStart > effectiveEnd) {
+        setLoading(false)
+        setError('The start date must be on or before the end date.')
+        return
+      }
+      if (!supabase) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+
+      setLoading(true)
+      setError(null)
+      const bounds = getClinicDateBounds(effectiveStart, effectiveEnd, timezone)
+      const [registrationResult, appointmentResult, visitResult, paymentResult, invoiceResult, doctorResult] = await Promise.all([
+        supabase.from('patients').select('id', { count: 'exact', head: true }).eq('clinic_id', clinicId).gte('created_at', bounds.start).lt('created_at', bounds.end),
+        supabase.from('appointments').select('id, patient_id, doctor_id, appointment_date, start_time, end_time, service, status').eq('clinic_id', clinicId).gte('appointment_date', effectiveStart).lte('appointment_date', effectiveEnd).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
+        supabase.from('visits').select('id, doctor_id, appointment_id').eq('clinic_id', clinicId).gte('visit_date', bounds.start).lt('visit_date', bounds.end),
+        supabase.from('payments').select('id, clinic_id, invoice_id, patient_id, amount, payment_method, payment_date').eq('clinic_id', clinicId).gte('payment_date', bounds.start).lt('payment_date', bounds.end),
+        supabase.from('invoices').select('id, currency, status, balance').eq('clinic_id', clinicId).in('status', ['draft', 'partially_paid']).gt('balance', 0),
+        loadDoctorOptions(clinicId),
+      ])
+      if (cancelled) return
+      if (registrationResult.error || appointmentResult.error || visitResult.error || paymentResult.error || invoiceResult.error) {
+        setLoading(false)
+        setError('We could not load reports for this date range.')
+        return
+      }
+
+      const appointments = (appointmentResult.data ?? []) as DashboardAppointment[]
+      const visits = (visitResult.data ?? []) as ReportVisit[]
+      const payments = (paymentResult.data ?? []) as DashboardPayment[]
+      const openInvoices = (invoiceResult.data ?? []) as InvoiceBalanceSummary[]
+      const paymentInvoiceIds = [...new Set(payments.map((payment) => payment.invoice_id))]
+      let paymentInvoiceRows: InvoiceBalanceSummary[] = []
+      if (paymentInvoiceIds.length > 0) {
+        const { data: paymentInvoiceData, error: paymentInvoiceError } = await supabase.from('invoices').select('id, currency, status, balance').eq('clinic_id', clinicId).in('id', paymentInvoiceIds)
+        if (cancelled) return
+        if (paymentInvoiceError) {
+          setLoading(false)
+          setError('We could not load invoice currencies for payment reports.')
+          return
+        }
+        paymentInvoiceRows = (paymentInvoiceData ?? []) as InvoiceBalanceSummary[]
+      }
+      const invoiceMap = Object.fromEntries([...openInvoices, ...paymentInvoiceRows].map((invoice) => [invoice.id, invoice]))
+      const doctorLabels = Object.fromEntries(doctorResult.doctors.map((doctor) => [doctor.id, doctor.name]))
+      const doctorIds = [...new Set([...appointments.map((appointment) => appointment.doctor_id), ...visits.map((visit) => visit.doctor_id)].filter((id): id is string => Boolean(id)))]
+      const doctorActivity = doctorIds.map((id) => ({
+        id,
+        label: doctorLabels[id] ?? 'Clinic doctor',
+        appointments: appointments.filter((appointment) => appointment.doctor_id === id).length,
+        visits: visits.filter((visit) => visit.doctor_id === id).length,
+      })).sort((first, second) => second.visits + second.appointments - first.visits - first.appointments)
+      const paymentsByMethod: Record<string, Record<string, number>> = {}
+      for (const payment of payments) {
+        const currency = invoiceMap[payment.invoice_id]?.currency
+        if (!currency) continue
+        paymentsByMethod[payment.payment_method] ??= {}
+        paymentsByMethod[payment.payment_method][currency] = (paymentsByMethod[payment.payment_method][currency] ?? 0) + payment.amount
+      }
+
+      setData({
+        registrations: registrationResult.count ?? 0,
+        appointments,
+        visits,
+        paymentsByCurrency: sumPaymentsByCurrency(payments, invoiceMap),
+        paymentsByMethod,
+        outstandingByCurrency: sumBalancesByCurrency(openInvoices),
+        doctorActivity,
+      })
+      setLoading(false)
+    }
+
+    void loadReports()
+    return () => { cancelled = true }
+  }, [clinicId, effectiveEnd, effectiveStart, timezone])
+
+  const appointmentsByStatus = (data?.appointments ?? []).reduce<Record<string, number>>((counts, appointment) => {
+    counts[appointment.status] = (counts[appointment.status] ?? 0) + 1
+    return counts
+  }, {})
+  const totals = (values: Record<string, number>) => Object.entries(values).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <span key={currency}>{formatMoney(amount, currency)}</span>)
+
+  return <div className="reports-page">
+    <div className="page-heading"><div><p className="eyebrow">Clinic operations</p><h1>Reports</h1><p className="panel-copy">Period activity and current balances.</p></div></div>
+    <div className="report-date-range"><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>Through<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label></div>
+    {error && <div className="state-panel state-error" role="alert">{error}</div>}
+    {loading && <p className="inline-state" role="status">Loading reports...</p>}
+    {!loading && !error && data && <>
+      <div className="summary-grid report-metrics">
+        <DashboardMetric label="Patient Registrations" value={String(data.registrations)} />
+        <DashboardMetric label="Appointments" value={String(data.appointments.length)} />
+        <DashboardMetric label="Visits / Consultations" value={String(data.visits.length)} />
+        <DashboardMetric label="Payments Received" value={totals(data.paymentsByCurrency)} />
+      </div>
+      <div className="report-grid">
+        <DashboardSection title="Appointment Status">
+          {Object.keys(appointmentsByStatus).length === 0 ? <p className="inline-state">No appointments in this period.</p> : <div className="report-value-list">{Object.entries(appointmentsByStatus).map(([status, count]) => <div key={status}><span>{formatStatus(status)}</span><strong>{count}</strong></div>)}</div>}
+        </DashboardSection>
+        <DashboardSection title="Payments by Method and Currency">
+          {Object.keys(data.paymentsByMethod).length === 0 ? <p className="inline-state">No payments in this period.</p> : <div className="report-value-list">{Object.entries(data.paymentsByMethod).sort(([first], [second]) => first.localeCompare(second)).map(([method, currencies]) => <div key={method}><span>{formatStatus(method)}</span><strong>{totals(currencies)}</strong></div>)}</div>}
+        </DashboardSection>
+        <DashboardSection title="Current Outstanding Balance">
+          <p className="report-caption">Current snapshot, not a historical balance for the selected dates.</p>
+          {Object.keys(data.outstandingByCurrency).length === 0 ? <p className="inline-state">No outstanding balances.</p> : <div className="report-value-list">{Object.entries(data.outstandingByCurrency).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <div key={currency}><span>{currency}</span><strong>{formatMoney(amount, currency)}</strong></div>)}</div>}
+        </DashboardSection>
+        <DashboardSection title="Doctor Activity">
+          {data.doctorActivity.length === 0 ? <p className="inline-state">No doctor activity in this period.</p> : <div className="report-value-list">{data.doctorActivity.map((doctor) => <div key={doctor.id}><span>{doctor.label}</span><strong>{doctor.appointments} appointments · {doctor.visits} visits</strong></div>)}</div>}
+        </DashboardSection>
+      </div>
+    </>}
+  </div>
+}
+
+function sumPaymentsByCurrency(payments: DashboardPayment[], invoices: Record<string, Pick<Invoice, 'currency'>>) {
+  return payments.reduce<Record<string, number>>((totals, payment) => {
+    const currency = invoices[payment.invoice_id]?.currency
+    if (currency) totals[currency] = (totals[currency] ?? 0) + payment.amount
+    return totals
+  }, {})
+}
+
+function sumBalancesByCurrency(invoices: Array<Pick<Invoice, 'currency' | 'balance'>>) {
+  return invoices.reduce<Record<string, number>>((totals, invoice) => {
+    if (invoice.balance > 0) totals[invoice.currency] = (totals[invoice.currency] ?? 0) + invoice.balance
+    return totals
+  }, {})
+}
+
+function getClinicLocalDate(now: Date, timezone: string | null | undefined) {
+  const safeTimezone = getSafeTimezone(timezone)
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: safeTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function getSafeTimezone(timezone: string | null | undefined) {
+  const candidate = timezone?.trim() || 'UTC'
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: candidate }).format()
+    return candidate
+  } catch {
+    return 'UTC'
+  }
+}
+
+function formatDateTimeInTimezone(value: string, timezone: string | null | undefined) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: getSafeTimezone(timezone) }).format(new Date(value))
+}
+
+function addCalendarDay(date: string) {
+  const [year, month, day] = date.split('-').map(Number)
+  const nextDate = new Date(Date.UTC(year, month - 1, day + 1))
+  return `${nextDate.getUTCFullYear()}-${String(nextDate.getUTCMonth() + 1).padStart(2, '0')}-${String(nextDate.getUTCDate()).padStart(2, '0')}`
+}
+
+function localMidnightToUtc(date: string, timezone: string | null | undefined) {
+  const [year, month, day] = date.split('-').map(Number)
+  const desiredTime = Date.UTC(year, month - 1, day)
+  let candidateTime = desiredTime
+  const safeTimezone = getSafeTimezone(timezone)
+  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: safeTimezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = formatter.formatToParts(new Date(candidateTime))
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+    const representedTime = Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), Number(values.hour), Number(values.minute), Number(values.second))
+    const adjustment = desiredTime - representedTime
+    candidateTime += adjustment
+    if (adjustment === 0) break
+  }
+
+  return new Date(candidateTime).toISOString()
+}
+
+function getClinicDateBounds(startDate: string, inclusiveEndDate: string, timezone: string | null | undefined) {
+  return {
+    start: localMidnightToUtc(startDate, timezone),
+    end: localMidnightToUtc(addCalendarDay(inclusiveEndDate), timezone),
+  }
 }
 
 type DoctorOption = {
@@ -978,6 +1360,7 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
   const [visitRefreshVersion, setVisitRefreshVersion] = useState(0)
   const [showAppointmentForm, setShowAppointmentForm] = useState(false)
   const [appointmentSuccess, setAppointmentSuccess] = useState<string | null>(null)
+  const canViewFinance = role === 'admin' || role === 'receptionist'
 
   useEffect(() => {
     let cancelled = false
@@ -990,25 +1373,36 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
         return
       }
 
-      const [visitResult, prescriptionResult, investigationResult, invoiceResult, paymentResult] = await Promise.all([
+      const [visitResult, prescriptionResult, investigationResult] = await Promise.all([
         supabase.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('visit_date', { ascending: false }),
         supabase.from('prescriptions').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
         supabase.from('investigations').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
-        supabase.from('invoices').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: false }),
-        supabase.from('payments').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
       ])
 
       if (cancelled) return
       setVisitLoading(false)
-      if (visitResult.error || prescriptionResult.error || investigationResult.error || invoiceResult.error || paymentResult.error) {
+      if (visitResult.error || prescriptionResult.error || investigationResult.error) {
         setVisitError('We could not load this patient\'s visit history.')
         return
       }
       const visitRows = (visitResult.data ?? []) as Visit[]
       const prescriptionRows = (prescriptionResult.data ?? []) as Prescription[]
       const investigationRows = (investigationResult.data ?? []) as Investigation[]
-      const invoiceRows = (invoiceResult.data ?? []) as Invoice[]
-      const paymentRows = (paymentResult.data ?? []) as Payment[]
+      let invoiceRows: Invoice[] = []
+      let paymentRows: Payment[] = []
+      if (canViewFinance) {
+        const [invoiceResult, paymentResult] = await Promise.all([
+          supabase.from('invoices').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: false }),
+          supabase.from('payments').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
+        ])
+        if (cancelled) return
+        if (invoiceResult.error || paymentResult.error) {
+          setVisitError('We could not load this patient\'s visit history.')
+          return
+        }
+        invoiceRows = (invoiceResult.data ?? []) as Invoice[]
+        paymentRows = (paymentResult.data ?? []) as Payment[]
+      }
       setVisits(visitRows)
       setPrescriptions(Object.fromEntries(visitRows.map((visit) => [visit.id, prescriptionRows.filter((prescription) => prescription.visit_id === visit.id)])))
       setInvestigations(Object.fromEntries(visitRows.map((visit) => [visit.id, investigationRows.filter((investigation) => investigation.visit_id === visit.id)])))
@@ -1020,7 +1414,7 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
     return () => {
       cancelled = true
     }
-  }, [clinicId, patient.id, visitRefreshVersion])
+  }, [canViewFinance, clinicId, patient.id, visitRefreshVersion])
 
   function handleVisitCreated(visit: Visit) {
     setShowVisitForm(false)
@@ -1058,7 +1452,7 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
           {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
           {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician'} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} />)}</div>}
         </section>
-        {!visitLoading && !visitError && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={role === 'admin' || role === 'receptionist'} onPaymentRecorded={handlePaymentRecorded} />)}</div></section>}
+        {canViewFinance && !visitLoading && !visitError && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={role === 'admin' || role === 'receptionist'} onPaymentRecorded={handlePaymentRecorded} />)}</div></section>}
       </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}
     </section>
   )
@@ -1181,7 +1575,7 @@ function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, i
       <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
       <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
       {canViewDentalChart && userId && <DentalChart clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && visit.appointment_id === null} />}
-      <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{canBill && invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <p className="inline-state">No invoice for this visit.</p> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>
+      {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <p className="inline-state">No invoice for this visit.</p> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
     </article>
   )
 }

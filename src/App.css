@@ -234,6 +234,34 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .appointment-tabs button span { margin-left: 5px; color: var(--blue-600); }
 
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.dashboard-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dashboard-metrics .summary-card { min-height: 118px; }
+.dashboard-metrics .card-label { margin-bottom: 12px; }
+.dashboard-metrics .card-value { display: grid; gap: 4px; font-size: 16px; }
+.dashboard-sections, .report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.dashboard-list-section { min-width: 0; padding: 18px; border: 1px solid var(--slate-200); border-radius: 8px; background: var(--surface); }
+.dashboard-list-section .section-heading { margin-bottom: 12px; }
+.dashboard-list-section .section-heading h3 { margin: 0; color: var(--navy-950); font-size: 15px; }
+.dashboard-row-list { display: grid; }
+.dashboard-row { display: grid; grid-template-columns: 88px minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; padding: 10px 0; border-top: 1px solid var(--slate-200); color: var(--slate-500); font-size: 12px; }
+.dashboard-row:first-child { border-top: 0; }
+.dashboard-row strong { min-width: 0; color: var(--slate-900); font-size: 12px; overflow-wrap: anywhere; }
+.dashboard-row small { grid-column: 2 / -1; color: var(--slate-500); font-size: 11px; }
+.dashboard-row .appointment-status { justify-self: end; white-space: nowrap; }
+.reports-page { max-width: 1180px; }
+.report-date-range { display: flex; flex-wrap: wrap; gap: 12px; margin: -18px 0 22px; }
+.report-date-range label { display: grid; gap: 5px; color: var(--slate-500); font-size: 11px; font-weight: 800; }
+.report-date-range input { min-height: 38px; padding: 7px 9px; border: 1px solid var(--slate-300); border-radius: 6px; color: var(--slate-900); background: var(--surface); }
+.report-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.report-metrics .summary-card { min-height: 118px; }
+.report-metrics .card-label { margin-bottom: 12px; }
+.report-metrics .card-value { display: grid; gap: 4px; font-size: 16px; }
+.report-grid { margin-top: 16px; }
+.report-value-list { display: grid; }
+.report-value-list > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--slate-200); color: var(--slate-700); font-size: 12px; }
+.report-value-list > div:first-child { border-top: 0; }
+.report-value-list strong { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; color: var(--navy-950); font-size: 12px; text-align: right; }
+.report-caption { margin: 0 0 8px; color: var(--slate-500); font-size: 11px; }
 
 .summary-card, .dashboard-panel, .registration-panel, .state-panel, .table-frame {
   border: 1px solid var(--slate-200);
@@ -488,6 +516,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .dashboard-intro, .page-heading, .dashboard-panel { display: block; }
   .dashboard-intro .primary-action, .page-heading .primary-action { margin-top: 20px; }
   .summary-grid, .patient-form { grid-template-columns: 1fr; }
+  .dashboard-sections, .report-grid { grid-template-columns: 1fr; }
   .profile-grid { grid-template-columns: 1fr; }
   .patient-toolbar { display: block; }
   .search-field { width: 100%; }
