@@ -67,8 +67,9 @@ function App() {
     async function loadMembership() {
       const { data: membershipRows, error: membershipQueryError } = await client
         .from('clinic_memberships')
-        .select('user_id, clinic_id, role, created_at')
+        .select('user_id, clinic_id, role, is_active, created_at')
         .eq('user_id', authenticatedUser.id)
+        .order('is_active', { ascending: false })
         .limit(1)
 
       if (cancelled) return
@@ -82,6 +83,12 @@ function App() {
       if (!membership) {
         setMembershipContext(null)
         setMembershipLoading(false)
+        return
+      }
+      if (!membership.is_active) {
+        setMembershipContext(null)
+        setMembershipLoading(false)
+        setMembershipError('Your clinic access is inactive. Contact a clinic administrator.')
         return
       }
 
@@ -106,11 +113,16 @@ function App() {
     }
   }, [authStatus, session])
 
+  async function handleInactiveSignOut() {
+    const error = await signOut()
+    if (error) setMembershipError('Sign-out failed. Please try again.')
+  }
+
   if (authStatus === 'loading') return <StatusScreen message="Loading your session..." />
   if (authStatus === 'error') return <StatusScreen message={authError ?? 'Authentication is temporarily unavailable.'} />
   if (authStatus === 'unauthenticated') return <LoginScreen error={authError} onError={setAuthError} />
   if (membershipLoading) return <StatusScreen message="Loading your clinic..." />
-  if (membershipError) return <StatusScreen message={membershipError} action={<button onClick={() => window.location.reload()}>Try again</button>} />
+  if (membershipError) return <StatusScreen message={membershipError} action={membershipError === 'Your clinic access is inactive. Contact a clinic administrator.' ? <button onClick={() => void handleInactiveSignOut()} type="button">Sign Out</button> : <button onClick={() => window.location.reload()} type="button">Try again</button>} />
   if (!membershipContext) return <ClinicSetupScreen user={session!.user} />
 
   return <ClinicShell context={membershipContext} />
@@ -214,6 +226,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
           <p className="nav-label nav-label-spaced">Management</p>
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => setActiveModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => setActiveModule('Reports')} type="button"><span className="nav-dot" />Reports</button>}
+          {context.membership.role === 'admin' && <button className={`nav-item nav-button${activeModule === 'Staff' ? ' active' : ''}`} onClick={() => setActiveModule('Staff')} type="button"><span className="nav-dot" />Staff</button>}
           {['Prescriptions', 'Investigations'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
           <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => setActiveModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
         </nav>
@@ -221,7 +234,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => setActiveModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={context.clinic.id} userId={context.user.id} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => setActiveModule('Patients')} />}
       </section>
     </main>
   )
@@ -286,9 +299,7 @@ function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPat
 
       const appointments = (appointmentResult.data ?? []) as DashboardAppointment[]
       const patientCount = patientCountResult?.count ?? null
-      let todayPayments: DashboardPayment[] = []
       let recentPayments: DashboardPayment[] = []
-      let openInvoices: DashboardInvoice[] = []
       let invoiceMap: Record<string, DashboardInvoice> = {}
       let revenueByCurrency: Record<string, number> = {}
       let outstandingByCurrency: Record<string, number> = {}
@@ -307,9 +318,9 @@ function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPat
           return
         }
 
-        todayPayments = (todayPaymentResult.data ?? []) as DashboardPayment[]
+        const todayPayments = (todayPaymentResult.data ?? []) as DashboardPayment[]
         recentPayments = (recentPaymentResult.data ?? []) as DashboardPayment[]
-        openInvoices = (openInvoiceResult.data ?? []) as DashboardInvoice[]
+        const openInvoices = (openInvoiceResult.data ?? []) as DashboardInvoice[]
         const invoiceIds = [...new Set([...todayPayments, ...recentPayments].map((payment) => payment.invoice_id))]
         if (invoiceIds.length > 0) {
           const { data: paymentInvoiceRows, error: invoiceError } = await supabase.from('invoices').select('id, patient_id, invoice_number, currency, status, balance').eq('clinic_id', clinicId).in('id', invoiceIds)
@@ -320,6 +331,7 @@ function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPat
             return
           }
           invoiceMap = Object.fromEntries(((paymentInvoiceRows ?? []) as DashboardInvoice[]).map((invoice) => [invoice.id, invoice]))
+
         }
         openInvoices.forEach((invoice) => { invoiceMap[invoice.id] = invoice })
         revenueByCurrency = sumPaymentsByCurrency(todayPayments, invoiceMap)
@@ -409,6 +421,130 @@ function DashboardSection({ title, children }: { title: string; children: React.
   return <section className="dashboard-list-section"><div className="section-heading"><h3>{title}</h3></div>{children}</section>
 }
 
+const managedStaffRoles: ClinicMembership['role'][] = ['admin', 'doctor', 'receptionist']
+
+function StaffManagementView({ clinicId, userId }: { clinicId: string; userId: string }) {
+  const [staff, setStaff] = useState<ClinicMembership[]>([])
+  const [profiles, setProfiles] = useState<Record<string, string | null>>({})
+  const [roleChanges, setRoleChanges] = useState<Record<string, ClinicMembership['role']>>({})
+  const [loading, setLoading] = useState(true)
+  const [savingUserId, setSavingUserId] = useState<string | null>(null)
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadStaff() {
+      if (!supabase) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+
+      setLoading(true)
+      setError(null)
+      const { data: membershipRows, error: membershipError } = await supabase
+        .from('clinic_memberships')
+        .select('user_id, clinic_id, role, is_active, created_at')
+        .eq('clinic_id', clinicId)
+        .in('role', managedStaffRoles)
+        .order('created_at', { ascending: true })
+      if (cancelled) return
+      if (membershipError) {
+        setLoading(false)
+        setError('We could not load staff for this clinic.')
+        return
+      }
+
+      const memberships = (membershipRows ?? []) as ClinicMembership[]
+      const userIds = memberships.map((membership) => membership.user_id)
+      let profileMap: Record<string, string | null> = {}
+      if (userIds.length > 0) {
+        const { data: profileRows, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, display_name')
+          .in('id', userIds)
+        if (cancelled) return
+        if (profileError) {
+          setLoading(false)
+          setError('We could not load staff display names.')
+          return
+        }
+        profileMap = Object.fromEntries(((profileRows ?? []) as Array<{ id: string; display_name: string | null }>).map((profile) => [profile.id, profile.display_name]))
+      }
+
+      setStaff(memberships)
+      setProfiles(profileMap)
+      setRoleChanges({})
+      setLoading(false)
+    }
+
+    void loadStaff()
+    return () => { cancelled = true }
+  }, [clinicId, refreshVersion])
+
+  async function changeRole(membership: ClinicMembership) {
+    const newRole = roleChanges[membership.user_id] ?? membership.role
+    if (newRole === membership.role || !supabase) return
+    setSavingUserId(membership.user_id)
+    setError(null)
+    setSuccess(null)
+    const { data, error: rpcError } = await supabase.rpc('admin_change_clinic_staff_role', {
+      p_clinic_id: clinicId,
+      p_target_user_id: membership.user_id,
+      p_new_role: newRole,
+    } as never)
+    setSavingUserId(null)
+    if (rpcError || !data) {
+      setError(rpcError?.message || 'We could not update this staff role. No change was made.')
+      return
+    }
+    setSuccess('Staff role updated.')
+    setRefreshVersion((version) => version + 1)
+  }
+
+  async function setStaffActive(membership: ClinicMembership) {
+    const name = profiles[membership.user_id]?.trim() || 'this staff member'
+    if (membership.is_active && !window.confirm(`Deactivate ${name}? They will lose access to this clinic.`)) return
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    setSavingUserId(membership.user_id)
+    setError(null)
+    setSuccess(null)
+    const { data, error: rpcError } = await supabase.rpc('admin_set_clinic_staff_active', {
+      p_clinic_id: clinicId,
+      p_target_user_id: membership.user_id,
+      p_is_active: !membership.is_active,
+    } as never)
+    setSavingUserId(null)
+    if (rpcError || !data) {
+      setError(rpcError?.message || 'We could not update this staff membership. No change was made.')
+      return
+    }
+    setSuccess(membership.is_active ? 'Staff member deactivated.' : 'Staff member activated.')
+    setRefreshVersion((version) => version + 1)
+  }
+
+  return <div className="staff-page">
+    <div className="page-heading"><div><p className="eyebrow">Clinic management</p><h1>Staff</h1><p className="panel-copy">Manage active clinic staff and roles.</p></div></div>
+    {success && <div className="state-panel state-success" role="status">{success}</div>}
+    {error && <div className="state-panel state-error" role="alert">{error}</div>}
+    {loading && <p className="inline-state" role="status">Loading staff...</p>}
+    {!loading && !error && staff.length === 0 && <div className="state-panel"><h2>No staff memberships</h2><p>Staff assigned to this clinic will appear here.</p></div>}
+    {!loading && !error && staff.length > 0 && <div className="table-frame staff-table-frame"><table className="patient-table staff-table"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>{staff.map((membership) => {
+      const name = profiles[membership.user_id]?.trim() || 'Unnamed staff'
+      const isCurrentAdmin = membership.user_id === userId
+      const selectedRole = roleChanges[membership.user_id] ?? membership.role
+      const isSaving = savingUserId === membership.user_id
+      return <tr key={membership.user_id}><td className="staff-name">{name}{isCurrentAdmin && <span className="staff-you">You</span>}</td><td>{formatStatus(membership.role)}</td><td><span className={`staff-status${membership.is_active ? ' active' : ' inactive'}`}>{membership.is_active ? 'Active' : 'Inactive'}</span></td><td>{isCurrentAdmin ? <span className="staff-self-note">Your access is managed separately.</span> : <div className="staff-actions"><label className="staff-role-select"><span className="visually-hidden">Role for {name}</span><select aria-label={`Role for ${name}`} value={selectedRole} onChange={(event) => setRoleChanges((current) => ({ ...current, [membership.user_id]: event.target.value as ClinicMembership['role'] }))} disabled={isSaving}><option value="admin">Admin</option><option value="doctor">Doctor</option><option value="receptionist">Receptionist</option></select></label><button className="button-secondary staff-action" onClick={() => void changeRole(membership)} type="button" disabled={isSaving || selectedRole === membership.role}>{isSaving ? 'Saving...' : 'Save role'}</button><button className="button-secondary staff-action" onClick={() => void setStaffActive(membership)} type="button" disabled={isSaving}>{membership.is_active ? 'Deactivate' : 'Activate'}</button></div>}</td></tr>
+    })}</tbody></table></div>}
+  </div>
+}
+
 type ReportsData = {
   registrations: number
   appointments: DashboardAppointment[]
@@ -447,13 +583,12 @@ function ReportsView({ clinicId, timezone }: { clinicId: string; timezone: strin
       setLoading(true)
       setError(null)
       const bounds = getClinicDateBounds(effectiveStart, effectiveEnd, timezone)
-      const [registrationResult, appointmentResult, visitResult, paymentResult, invoiceResult, doctorResult] = await Promise.all([
+      const [registrationResult, appointmentResult, visitResult, paymentResult, invoiceResult] = await Promise.all([
         supabase.from('patients').select('id', { count: 'exact', head: true }).eq('clinic_id', clinicId).gte('created_at', bounds.start).lt('created_at', bounds.end),
         supabase.from('appointments').select('id, patient_id, doctor_id, appointment_date, start_time, end_time, service, status').eq('clinic_id', clinicId).gte('appointment_date', effectiveStart).lte('appointment_date', effectiveEnd).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
         supabase.from('visits').select('id, doctor_id, appointment_id').eq('clinic_id', clinicId).gte('visit_date', bounds.start).lt('visit_date', bounds.end),
         supabase.from('payments').select('id, clinic_id, invoice_id, patient_id, amount, payment_method, payment_date').eq('clinic_id', clinicId).gte('payment_date', bounds.start).lt('payment_date', bounds.end),
         supabase.from('invoices').select('id, currency, status, balance').eq('clinic_id', clinicId).in('status', ['draft', 'partially_paid']).gt('balance', 0),
-        loadDoctorOptions(clinicId),
       ])
       if (cancelled) return
       if (registrationResult.error || appointmentResult.error || visitResult.error || paymentResult.error || invoiceResult.error) {
@@ -479,8 +614,9 @@ function ReportsView({ clinicId, timezone }: { clinicId: string; timezone: strin
         paymentInvoiceRows = (paymentInvoiceData ?? []) as InvoiceBalanceSummary[]
       }
       const invoiceMap = Object.fromEntries([...openInvoices, ...paymentInvoiceRows].map((invoice) => [invoice.id, invoice]))
-      const doctorLabels = Object.fromEntries(doctorResult.doctors.map((doctor) => [doctor.id, doctor.name]))
       const doctorIds = [...new Set([...appointments.map((appointment) => appointment.doctor_id), ...visits.map((visit) => visit.doctor_id)].filter((id): id is string => Boolean(id)))]
+      const doctorLabels = await loadClinicianNames(doctorIds)
+      if (cancelled) return
       const doctorActivity = doctorIds.map((id) => ({
         id,
         label: doctorLabels[id] ?? 'Clinic doctor',
@@ -634,9 +770,10 @@ async function loadDoctorOptions(clinicId: string): Promise<{ doctors: DoctorOpt
 
   const { data: membershipRows, error: membershipError } = await supabase
     .from('clinic_memberships')
-    .select('user_id, clinic_id, role, created_at')
+    .select('user_id, clinic_id, role, is_active, created_at')
     .eq('clinic_id', clinicId)
     .eq('role', 'doctor')
+    .eq('is_active', true)
 
   if (membershipError) return { doctors: [], error: 'We could not load the clinic doctor directory.' }
   const doctorIds = (membershipRows as ClinicMembership[]).map((membership) => membership.user_id)
@@ -656,6 +793,21 @@ async function loadDoctorOptions(clinicId: string): Promise<{ doctors: DoctorOpt
     })),
     error: null,
   }
+}
+
+async function loadClinicianNames(userIds: string[]) {
+  const uniqueUserIds = [...new Set(userIds.filter(Boolean))]
+  if (!supabase || uniqueUserIds.length === 0) return {}
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, display_name')
+    .in('id', uniqueUserIds)
+  const profiles = error ? [] : (data ?? []) as Array<{ id: string; display_name?: string | null }>
+  return Object.fromEntries(uniqueUserIds.map((id) => [
+    id,
+    profiles.find((profile) => profile.id === id)?.display_name?.trim() || 'Clinic doctor',
+  ]))
 }
 
 type AppointmentView = 'upcoming' | 'today' | 'waiting'
@@ -686,11 +838,10 @@ function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId
       setLoading(true)
       setTransitionError(null)
       const today = new Date().toISOString().slice(0, 10)
-      const [appointmentResult, waitingResult, patientResult, doctorResult] = await Promise.all([
+      const [appointmentResult, waitingResult, patientResult] = await Promise.all([
         supabase.from('appointments').select('*').eq('clinic_id', clinicId).gte('appointment_date', today).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
         supabase.from('appointments').select('*').eq('clinic_id', clinicId).eq('status', 'waiting').order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
         supabase.from('patients').select('id, patient_number, first_name, middle_name, last_name').eq('clinic_id', clinicId),
-        loadDoctorOptions(clinicId),
       ])
 
       if (cancelled) return
@@ -701,12 +852,15 @@ function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId
       }
 
       const patientMap = Object.fromEntries(((patientResult.data ?? []) as PatientAppointmentSummary[]).map((patient) => [patient.id, patient]))
-      const doctorMap = Object.fromEntries(doctorResult.doctors.map((doctor) => [doctor.id, doctor.name]))
-      setAppointments((appointmentResult.data ?? []) as Appointment[])
-      setWaitingAppointments((waitingResult.data ?? []) as Appointment[])
+      const appointmentRows = (appointmentResult.data ?? []) as Appointment[]
+      const waitingRows = (waitingResult.data ?? []) as Appointment[]
+      const doctorIds = [...new Set([...appointmentRows, ...waitingRows].map((appointment) => appointment.doctor_id).filter((id): id is string => Boolean(id)))]
+      const doctorMap = await loadClinicianNames(doctorIds)
+      if (cancelled) return
+      setAppointments(appointmentRows)
+      setWaitingAppointments(waitingRows)
       setPatients(patientMap)
       setDoctors(doctorMap)
-      if (doctorResult.error) setTransitionError(doctorResult.error)
     }
 
     void loadAppointments()
@@ -1348,6 +1502,7 @@ function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (
 function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, patient, onBack, onUpdated }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; onBack: () => void; onUpdated: (patient: Patient) => void }) {
   const [editing, setEditing] = useState(false)
   const [visits, setVisits] = useState<Visit[]>([])
+  const [doctorNames, setDoctorNames] = useState<Record<string, string>>({})
   const [prescriptions, setPrescriptions] = useState<Record<string, Prescription[]>>({})
   const [investigations, setInvestigations] = useState<Record<string, Investigation[]>>({})
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -1388,6 +1543,8 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
       const visitRows = (visitResult.data ?? []) as Visit[]
       const prescriptionRows = (prescriptionResult.data ?? []) as Prescription[]
       const investigationRows = (investigationResult.data ?? []) as Investigation[]
+      const historicalDoctorNames = await loadClinicianNames(visitRows.map((visit) => visit.doctor_id))
+      if (cancelled) return
       let invoiceRows: Invoice[] = []
       let paymentRows: Payment[] = []
       if (canViewFinance) {
@@ -1404,6 +1561,7 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
         paymentRows = (paymentResult.data ?? []) as Payment[]
       }
       setVisits(visitRows)
+      setDoctorNames(historicalDoctorNames)
       setPrescriptions(Object.fromEntries(visitRows.map((visit) => [visit.id, prescriptionRows.filter((prescription) => prescription.visit_id === visit.id)])))
       setInvestigations(Object.fromEntries(visitRows.map((visit) => [visit.id, investigationRows.filter((investigation) => investigation.visit_id === visit.id)])))
       setInvoices(invoiceRows)
@@ -1450,7 +1608,7 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
           {visitLoading && <p className="inline-state" role="status">Loading visit history...</p>}
           {!visitLoading && visitError && <p className="form-error" role="alert">{visitError}</p>}
           {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
-          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician'} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} />)}</div>}
+          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={doctorNames[visit.doctor_id] ?? (visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician')} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} />)}</div>}
         </section>
         {canViewFinance && !visitLoading && !visitError && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={role === 'admin' || role === 'receptionist'} onPaymentRecorded={handlePaymentRecorded} />)}</div></section>}
       </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}

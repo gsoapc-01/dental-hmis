@@ -13,6 +13,7 @@ import type {
   Payment,
   Prescription,
   Profile,
+  UserRole,
   Visit,
 } from '../types/domain'
 import { env } from '../config/env'
@@ -22,7 +23,7 @@ export interface Database {
     Tables: {
       clinics: { Row: Clinic; Insert: Omit<Clinic, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Clinic> }
       profiles: { Row: Profile; Insert: Omit<Profile, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Profile> }
-      clinic_memberships: { Row: ClinicMembership; Insert: Omit<ClinicMembership, 'created_at'>; Update: Partial<ClinicMembership> }
+      clinic_memberships: { Row: ClinicMembership; Insert: Omit<ClinicMembership, 'created_at' | 'is_active'> & { is_active?: boolean }; Update: Partial<ClinicMembership> }
       patients: { Row: Patient; Insert: Omit<Patient, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Patient> }
       appointments: { Row: Appointment; Insert: Omit<Appointment, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Appointment> }
       visits: { Row: Visit; Insert: Omit<Visit, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Visit> }
@@ -38,6 +39,14 @@ export interface Database {
       bootstrap_clinic: {
         Args: { p_name: string }
         Returns: string
+      }
+      admin_change_clinic_staff_role: {
+        Args: { p_clinic_id: string; p_target_user_id: string; p_new_role: UserRole }
+        Returns: ClinicMembership
+      }
+      admin_set_clinic_staff_active: {
+        Args: { p_clinic_id: string; p_target_user_id: string; p_is_active: boolean }
+        Returns: ClinicMembership
       }
       start_consultation: {
         Args: { p_appointment_id: string }
