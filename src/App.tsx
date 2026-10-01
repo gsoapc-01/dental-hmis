@@ -4,7 +4,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import './App.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { supabase } from './lib/supabase'
-import type { Appointment, AppointmentStatus, Clinic, ClinicMembership, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, UserRole, Visit } from './types/domain'
+import type { Appointment, AppointmentStatus, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 
@@ -399,7 +399,7 @@ function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId
       {loading && <div className="state-panel" role="status">Loading upcoming appointments...</div>}
       {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
       {!loading && !error && transitionError && <div className="state-panel state-error" role="alert">{transitionError}</div>}
-      {activeConsultation && <ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} />}
+      {activeConsultation && <><ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} /><DentalChart clinicId={clinicId} visit={activeConsultation.visit} userId={userId} canCreate defaultOpen /></>}
       {!loading && !error && !hasAppointments && <div className="state-panel"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></div>}
       {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <div className="state-panel"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></div>}
       {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} transitioning={transitioningId === appointment.id} />)}</div>}
@@ -1056,7 +1056,7 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
           {visitLoading && <p className="inline-state" role="status">Loading visit history...</p>}
           {!visitLoading && visitError && <p className="form-error" role="alert">{visitError}</p>}
           {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
-          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician'} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} />)}</div>}
+          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician'} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} />)}</div>}
         </section>
         {!visitLoading && !visitError && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={role === 'admin' || role === 'receptionist'} onPaymentRecorded={handlePaymentRecorded} />)}</div></section>}
       </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}
@@ -1171,8 +1171,19 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
   return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <p className="form-error" role="alert">{error}</p>}</section>
 }
 
-function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void }) {
-  return <article className={`visit-card${isLatest ? ' latest' : ''}`}><div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div>{isLatest && <span className="latest-badge">Latest</span>}</div><div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div><VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} /><div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{canBill && invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <p className="inline-state">No invoice for this visit.</p> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div></article>
+function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void }) {
+  const canViewDentalChart = (role === 'admin' || role === 'doctor') && Boolean(userId)
+  const canAddDentalEntries = role === 'admin' || (role === 'doctor' && visit.doctor_id === userId)
+
+  return (
+    <article className={`visit-card${isLatest ? ' latest' : ''}`}>
+      <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div>{isLatest && <span className="latest-badge">Latest</span>}</div>
+      <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
+      <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
+      {canViewDentalChart && userId && <DentalChart clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && visit.appointment_id === null} />}
+      <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{canBill && invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <p className="inline-state">No invoice for this visit.</p> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>
+    </article>
+  )
 }
 
 function InvoiceCard({ invoice, payments, clinicName, patient, canRecordPayment, onPaymentRecorded }: { invoice: Invoice; payments: Payment[]; clinicName: string; patient: Patient; canRecordPayment: boolean; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void }) {
@@ -1241,6 +1252,161 @@ function PaymentConfirmation({ clinicName, patient, invoice, payment }: { clinic
 
 function VisitRecordsSummary({ prescriptions, investigations }: { prescriptions: Prescription[]; investigations: Investigation[] }) {
   return <div className="visit-record-summary"><div><span>Prescriptions</span>{prescriptions.length === 0 ? <p>None recorded</p> : prescriptions.map((prescription) => <p key={prescription.id}><strong>{prescription.medicine}</strong>{prescription.dose ? ` · ${prescription.dose}` : ''}{prescription.frequency ? ` · ${prescription.frequency}` : ''}</p>)}</div><div><span>Investigations</span>{investigations.length === 0 ? <p>None requested</p> : investigations.map((investigation) => <p key={investigation.id}><strong>{investigation.investigation_type}</strong>{investigation.status ? ` · ${investigation.status}` : ''}</p>)}</div></div>
+}
+
+const dentalSurfaceOptions: Array<{ value: DentalSurface; label: string }> = [
+  { value: 'mesial', label: 'Mesial' },
+  { value: 'distal', label: 'Distal' },
+  { value: 'buccal_facial', label: 'Buccal / facial' },
+  { value: 'lingual_palatal', label: 'Lingual / palatal' },
+  { value: 'occlusal', label: 'Occlusal' },
+  { value: 'incisal', label: 'Incisal' },
+]
+
+const adultDentalQuadrants = [
+  { label: 'Upper right', teeth: [18, 17, 16, 15, 14, 13, 12, 11] },
+  { label: 'Upper left', teeth: [21, 22, 23, 24, 25, 26, 27, 28] },
+  { label: 'Lower right', teeth: [48, 47, 46, 45, 44, 43, 42, 41] },
+  { label: 'Lower left', teeth: [31, 32, 33, 34, 35, 36, 37, 38] },
+]
+
+function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }: { clinicId: string; visit: Visit; userId: string; canCreate: boolean; defaultOpen?: boolean }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen)
+  const [entries, setEntries] = useState<DentalChartEntry[]>([])
+  const [visitDates, setVisitDates] = useState<Record<string, string>>({})
+  const [selectedTooth, setSelectedTooth] = useState<number | null>(null)
+  const [surfaces, setSurfaces] = useState<DentalSurface[]>([])
+  const [finding, setFinding] = useState('')
+  const [procedureText, setProcedureText] = useState('')
+  const [notes, setNotes] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+
+    async function loadEntries() {
+      if (!supabase) {
+        setError('Supabase is not configured.')
+        return
+      }
+      setLoading(true)
+      const { data: visitRows, error: visitsError } = await supabase
+        .from('visits')
+        .select('id, visit_date')
+        .eq('clinic_id', clinicId)
+        .eq('patient_id', visit.patient_id)
+
+      if (cancelled) return
+      if (visitsError) {
+        setLoading(false)
+        setError('We could not load this patient\'s visit history.')
+        return
+      }
+
+      const patientVisits = (visitRows ?? []) as Array<Pick<Visit, 'id' | 'visit_date'>>
+      const { data, error: queryError } = await supabase
+        .from('dental_chart_entries')
+        .select('*')
+        .eq('clinic_id', clinicId)
+        .in('visit_id', patientVisits.map((patientVisit) => patientVisit.id))
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+
+      if (cancelled) return
+      setLoading(false)
+      if (queryError) {
+        setError('We could not load this visit\'s dental chart.')
+        return
+      }
+      setError(null)
+      setVisitDates(Object.fromEntries(patientVisits.map((patientVisit) => [patientVisit.id, patientVisit.visit_date])))
+      setEntries((data ?? []) as DentalChartEntry[])
+    }
+
+    void loadEntries()
+    return () => { cancelled = true }
+  }, [clinicId, isOpen, refreshVersion, visit.id, visit.patient_id])
+
+  const availableSurfaces = selectedTooth === null
+    ? dentalSurfaceOptions.filter((surface) => surface.value !== 'occlusal' && surface.value !== 'incisal')
+    : dentalSurfaceOptions.filter((surface) => {
+      if (surface.value === 'occlusal') return selectedTooth % 10 >= 4
+      if (surface.value === 'incisal') return selectedTooth % 10 <= 3
+      return true
+    })
+
+  async function saveEntry(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trimmedFinding = finding.trim()
+    const trimmedProcedure = procedureText.trim()
+    if (selectedTooth === null || (!trimmedFinding && !trimmedProcedure)) {
+      setError('Select a tooth and enter a finding or treatment/procedure.')
+      return
+    }
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    setMessage(null)
+    const { error: insertError } = await supabase.from('dental_chart_entries').insert({
+      clinic_id: clinicId,
+      visit_id: visit.id,
+      tooth_number: selectedTooth,
+      surfaces,
+      entry_type: trimmedFinding && trimmedProcedure ? 'finding_and_procedure' : trimmedFinding ? 'finding' : 'procedure',
+      finding: trimmedFinding || null,
+      procedure_text: trimmedProcedure || null,
+      notes: notes.trim() || null,
+      recorded_by: userId,
+    } as never)
+    setSaving(false)
+    if (insertError) {
+      setError('We could not save this dental entry. Confirm the visit is open and try again.')
+      return
+    }
+
+    setFinding('')
+    setProcedureText('')
+    setNotes('')
+    setSurfaces([])
+    setMessage('Dental entry saved.')
+    setRefreshVersion((version) => version + 1)
+  }
+
+  return (
+    <section className={`dental-chart${defaultOpen ? ' dental-chart-active' : ''}`}>
+      {!defaultOpen && <button className="dental-chart-toggle" type="button" aria-expanded={isOpen} onClick={() => setIsOpen((open) => !open)}>Dental chart {isOpen ? '−' : '+'}</button>}
+      {isOpen && <>
+        {defaultOpen && <div className="dental-chart-heading"><div><p className="card-label">Dental chart</p><h3>Odontogram</h3></div><span>Visit {formatDateTime(visit.visit_date)}</span></div>}
+        <div className="odontogram-quadrants">{adultDentalQuadrants.map((quadrant) => <section className="odontogram-quadrant" key={quadrant.label}><h4>{quadrant.label}</h4><div>{quadrant.teeth.map((toothNumber) => {
+          const hasEntries = entries.some((entry) => entry.tooth_number === toothNumber)
+          return <button className={`odontogram-tooth${selectedTooth === toothNumber ? ' selected' : ''}${hasEntries ? ' has-entry' : ''}`} key={toothNumber} type="button" aria-pressed={selectedTooth === toothNumber} aria-label={`Tooth ${toothNumber}${hasEntries ? ', has recorded entries' : ''}`} onClick={() => { setSelectedTooth(toothNumber); setSurfaces([]) }}>{toothNumber}</button>
+        })}</div></section>)}</div>
+        {canCreate && <form className="dental-entry-form" onSubmit={saveEntry}>
+          <h4>{selectedTooth === null ? 'Select a tooth' : `Tooth ${selectedTooth}`}</h4>
+          <fieldset disabled={selectedTooth === null || saving}>
+            <legend>Surfaces (optional)</legend>
+            <div className="dental-surface-options">{availableSurfaces.map((surface) => <label key={surface.value}><input type="checkbox" checked={surfaces.includes(surface.value)} onChange={(event) => setSurfaces((current) => event.target.checked ? [...current, surface.value] : current.filter((value) => value !== surface.value))} />{surface.label}</label>)}</div>
+          </fieldset>
+          <div className="dental-entry-fields"><label>Finding / condition<input value={finding} onChange={(event) => setFinding(event.target.value)} maxLength={500} placeholder="For example, caries" disabled={selectedTooth === null || saving} /></label><label>Treatment / procedure<input value={procedureText} onChange={(event) => setProcedureText(event.target.value)} maxLength={500} placeholder="For example, restoration" disabled={selectedTooth === null || saving} /></label><label className="dental-notes">Notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} maxLength={2000} disabled={selectedTooth === null || saving} /></label></div>
+          <button type="submit" disabled={saving || selectedTooth === null || (!finding.trim() && !procedureText.trim())}>{saving ? 'Saving...' : 'Save Entry'}</button>
+        </form>}
+        {loading && <p className="inline-state" role="status">Loading dental history...</p>}
+        {!loading && entries.length === 0 && <p className="inline-state">No dental entries recorded for this patient.</p>}
+        {entries.length > 0 && <div className="dental-entry-history"><h4>Patient dental history</h4>{entries.map((entry) => <article className="dental-entry" key={entry.id}><div><strong>Tooth {entry.tooth_number}</strong><time>{visitDates[entry.visit_id] ? `Visit ${formatDateTime(visitDates[entry.visit_id])} · ` : ''}Recorded {formatDateTime(entry.created_at)}</time></div>{entry.surfaces.length > 0 && <span>{entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ')}</span>}{entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}</article>)}</div>}
+        {message && <p className="dental-message" role="status">{message}</p>}
+        {error && <p className="form-error" role="alert">{error}</p>}
+      </>}
+    </section>
+  )
 }
 
 type AppointmentFormValues = {

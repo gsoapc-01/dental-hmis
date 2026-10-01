@@ -6,6 +6,7 @@ import type {
   Appointment,
   Clinic,
   ClinicMembership,
+  DentalChartEntry,
   Invoice,
   Investigation,
   Patient,
@@ -25,6 +26,7 @@ export interface Database {
       patients: { Row: Patient; Insert: Omit<Patient, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Patient> }
       appointments: { Row: Appointment; Insert: Omit<Appointment, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Appointment> }
       visits: { Row: Visit; Insert: Omit<Visit, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Visit> }
+      dental_chart_entries: { Row: DentalChartEntry; Insert: Omit<DentalChartEntry, 'id' | 'created_at'>; Update: Partial<DentalChartEntry> }
       prescriptions: { Row: Prescription; Insert: Omit<Prescription, 'id' | 'created_at'>; Update: Partial<Prescription> }
       investigations: { Row: Investigation; Insert: Omit<Investigation, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Investigation> }
       invoices: { Row: Invoice; Insert: Omit<Invoice, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Invoice> }

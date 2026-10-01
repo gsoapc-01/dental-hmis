@@ -30,6 +30,16 @@ export type PaymentMethod =
   | 'insurance'
   | 'other'
 
+export type DentalChartEntryType = 'finding' | 'procedure' | 'finding_and_procedure'
+
+export type DentalSurface =
+  | 'mesial'
+  | 'distal'
+  | 'buccal_facial'
+  | 'lingual_palatal'
+  | 'occlusal'
+  | 'incisal'
+
 export interface Clinic {
   id: string
   name: string
@@ -133,6 +143,20 @@ export interface Visit {
   follow_up_instructions?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface DentalChartEntry {
+  id: string
+  clinic_id: string
+  visit_id: string
+  tooth_number: number
+  surfaces: DentalSurface[]
+  entry_type: DentalChartEntryType
+  finding?: string | null
+  procedure_text?: string | null
+  notes?: string | null
+  recorded_by: string
+  created_at: string
 }
 
 export interface Prescription {
