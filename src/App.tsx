@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 
 import './App.css'
@@ -422,6 +422,7 @@ function DashboardSection({ title, children }: { title: string; children: React.
 }
 
 const managedStaffRoles: ClinicMembership['role'][] = ['admin', 'doctor', 'receptionist']
+type InvitableStaffRole = Extract<ClinicMembership['role'], 'admin' | 'doctor' | 'receptionist'>
 
 function StaffManagementView({ clinicId, userId }: { clinicId: string; userId: string }) {
   const [staff, setStaff] = useState<ClinicMembership[]>([])
@@ -432,6 +433,11 @@ function StaffManagementView({ clinicId, userId }: { clinicId: string; userId: s
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteDisplayName, setInviteDisplayName] = useState('')
+  const [inviteRole, setInviteRole] = useState<InvitableStaffRole | ''>('')
+  const [inviting, setInviting] = useState(false)
+  const inviteInFlight = useRef(false)
   useEffect(() => {
     let cancelled = false
 
@@ -529,8 +535,72 @@ function StaffManagementView({ clinicId, userId }: { clinicId: string; userId: s
     setRefreshVersion((version) => version + 1)
   }
 
+  async function inviteStaff(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (inviteInFlight.current) return
+
+    const email = inviteEmail.trim().toLowerCase()
+    const displayName = inviteDisplayName.trim()
+    if (!email || !displayName || !inviteRole) {
+      setError('Enter an email, display name, and role.')
+      return
+    }
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    inviteInFlight.current = true
+    setInviting(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const { data, error: inviteError } = await supabase.functions.invoke('invite-staff', {
+        body: {
+          clinic_id: clinicId,
+          email,
+          display_name: displayName,
+          role: inviteRole,
+        },
+      })
+      if (inviteError) {
+        let message = 'We could not send this invitation. Please try again.'
+        if (typeof inviteError === 'object' && 'context' in inviteError && inviteError.context instanceof Response) {
+          try {
+            const responseBody = await inviteError.context.clone().json() as { error?: unknown }
+            if (typeof responseBody.error === 'string') message = responseBody.error
+          } catch {
+            // Keep the generic message if the function returned a non-JSON error.
+          }
+        }
+        setError(message)
+        return
+      }
+
+      setSuccess(data && typeof data.message === 'string' ? data.message : 'Invitation sent and staff member added.')
+      setInviteEmail('')
+      setInviteDisplayName('')
+      setInviteRole('')
+      setRefreshVersion((version) => version + 1)
+    } catch {
+      setError('We could not send this invitation. Please try again.')
+    } finally {
+      inviteInFlight.current = false
+      setInviting(false)
+    }
+  }
+
   return <div className="staff-page">
     <div className="page-heading"><div><p className="eyebrow">Clinic management</p><h1>Staff</h1><p className="panel-copy">Manage active clinic staff and roles.</p></div></div>
+    <section className="registration-panel staff-invite-panel">
+      <div className="registration-heading"><p className="eyebrow">Staff access</p><h2>Invite Staff</h2></div>
+      <form className="staff-invite-form" onSubmit={(event) => void inviteStaff(event)}>
+        <label>Email<input type="email" autoComplete="email" maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required /></label>
+        <label>Display Name<input autoComplete="name" maxLength={120} value={inviteDisplayName} onChange={(event) => setInviteDisplayName(event.target.value)} required /></label>
+        <label>Role<select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as InvitableStaffRole | '')} required><option value="">Select role</option><option value="doctor">Doctor</option><option value="receptionist">Receptionist</option><option value="admin">Admin</option></select></label>
+        <button className="primary-action" type="submit" disabled={inviting}>{inviting ? 'Sending...' : 'Send Invitation'}</button>
+      </form>
+    </section>
     {success && <div className="state-panel state-success" role="status">{success}</div>}
     {error && <div className="state-panel state-error" role="alert">{error}</div>}
     {loading && <p className="inline-state" role="status">Loading staff...</p>}
