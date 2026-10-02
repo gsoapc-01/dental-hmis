@@ -96,12 +96,14 @@ async function provisionMembership(
   userId: string,
   displayName: string,
   role: StaffRole,
+  actorUserId: string,
 ) {
   return await adminClient.rpc("provision_clinic_staff_membership", {
     p_clinic_id: clinicId,
     p_user_id: userId,
     p_display_name: displayName,
     p_role: role,
+    p_actor_user_id: actorUserId,
   } as never)
 }
 
@@ -130,6 +132,7 @@ async function existingUserResponse(
   clinicId: string,
   displayName: string,
   role: StaffRole,
+  actorUserId: string,
   origin: string | null,
 ) {
   const { data: memberships, error } = await getUserMemberships(adminClient, user.id)
@@ -149,7 +152,7 @@ async function existingUserResponse(
     return jsonResponse(409, { error: "An unconfirmed account or invitation already exists for this email. No duplicate was created." }, origin)
   }
 
-  const { error: provisioningError } = await provisionMembership(adminClient, clinicId, user.id, displayName, role)
+  const { error: provisioningError } = await provisionMembership(adminClient, clinicId, user.id, displayName, role, actorUserId)
   if (provisioningError) {
     const { data: membershipsAfterProvision, error: membershipCheckError } = await getUserMemberships(adminClient, user.id)
     if (!membershipCheckError) {
@@ -241,6 +244,7 @@ Deno.serve(async (request: Request) => {
         payload.clinicId,
         payload.displayName,
         payload.role,
+        authData.user.id,
         origin,
       )
     }
@@ -259,6 +263,7 @@ Deno.serve(async (request: Request) => {
           payload.clinicId,
           payload.displayName,
           payload.role,
+          authData.user.id,
           origin,
         )
       }
@@ -275,6 +280,7 @@ Deno.serve(async (request: Request) => {
         newAuthUserId,
         payload.displayName,
         payload.role,
+        authData.user.id,
       )
       provisioningFailed = Boolean(provisioningError)
     } catch {

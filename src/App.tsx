@@ -4,7 +4,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import './App.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { supabase } from './lib/supabase'
-import type { Appointment, AppointmentStatus, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, UserRole, Visit } from './types/domain'
+import type { Appointment, AppointmentStatus, AuditLog, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 const clinicCurrencies = ['TZS', 'KES', 'UGX', 'USD'] as const
@@ -264,6 +264,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => navigateToModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => navigateToModule('Reports')} type="button"><span className="nav-dot" />Reports</button>}
           {context.membership.role === 'admin' && <button className={`nav-item nav-button${activeModule === 'Staff' ? ' active' : ''}`} onClick={() => navigateToModule('Staff')} type="button"><span className="nav-dot" />Staff</button>}
+          {canManageClinicSettings && <button className={`nav-item nav-button${activeModule === 'Audit / Activity' ? ' active' : ''}`} onClick={() => navigateToModule('Audit / Activity')} type="button"><span className="nav-dot" />Audit / Activity</button>}
           {canManageClinicSettings && <button className={`nav-item nav-button${activeModule === 'Settings' ? ' active' : ''}`} onClick={() => navigateToModule('Settings')} type="button"><span className="nav-dot" />Settings</button>}
           {['Prescriptions', 'Investigations'].map((item) => <button className={`nav-item nav-button${activeModule === item ? ' active' : ''}`} key={item} onClick={() => navigateToModule(item)} type="button"><span className="nav-dot" />{item}</button>)}
           <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => navigateToModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
@@ -272,7 +273,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
       </section>
     </main>
     {printableDocument && <PrintableDocumentPreview document={printableDocument} onClose={() => setPrintableDocument(null)} />}
@@ -326,6 +327,127 @@ function ClinicSettingsView({ clinic, onUpdated }: { clinic: Clinic; onUpdated: 
       {success && <p className="clinic-settings-success" role="status">{success}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </section>
+  </div>
+}
+
+function auditDetailText(metadata: unknown) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return ''
+  const values = metadata as Record<string, unknown>
+  const details: string[] = []
+  if (Array.isArray(values.changed_fields)) {
+    const fields = values.changed_fields.filter((field): field is string => typeof field === 'string')
+    if (fields.length > 0) details.push(`Changed: ${fields.map((field) => field.replaceAll('_', ' ')).join(', ')}`)
+  }
+  for (const [oldKey, newKey, label] of [
+    ['old_status', 'new_status', 'Status'],
+    ['old_role', 'new_role', 'Role'],
+    ['old_currency', 'new_currency', 'Currency'],
+    ['old_is_active', 'new_is_active', 'Active'],
+  ]) {
+    const oldValue = values[oldKey]
+    const newValue = values[newKey]
+    if ((typeof oldValue === 'string' || typeof oldValue === 'boolean') && (typeof newValue === 'string' || typeof newValue === 'boolean')) {
+      details.push(`${label}: ${String(oldValue)} → ${String(newValue)}`)
+    }
+  }
+  if (typeof values.new_status === 'string' && !('old_status' in values)) details.push(`Status: ${values.new_status}`)
+  if (typeof values.role === 'string') details.push(`Role: ${values.role}`)
+  if (typeof values.amount === 'number') details.push(`Amount: ${values.amount}${typeof values.currency === 'string' ? ` ${values.currency}` : ''}`)
+  if (typeof values.payment_method === 'string') details.push(`Method: ${values.payment_method.replaceAll('_', ' ')}`)
+  if (typeof values.tooth_number === 'number') details.push(`Tooth ${values.tooth_number}`)
+  if (typeof values.entry_type === 'string') details.push(values.entry_type.replaceAll('_', ' '))
+  if (Array.isArray(values.surfaces)) {
+    const surfaces = values.surfaces.filter((surface): surface is string => typeof surface === 'string')
+    if (surfaces.length > 0) details.push(surfaces.map((surface) => surface.replaceAll('_', ' ')).join(', '))
+  }
+  if (typeof values.is_active === 'boolean') details.push(values.is_active ? 'Active' : 'Inactive')
+  return details.join(' · ')
+}
+
+function AuditActivityView({ clinicId }: { clinicId: string }) {
+  const [events, setEvents] = useState<AuditLog[]>([])
+  const [actorNames, setActorNames] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedDate, setSelectedDate] = useState('')
+  const [selectedActor, setSelectedActor] = useState('')
+  const [selectedKind, setSelectedKind] = useState('')
+  const [refreshVersion, setRefreshVersion] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadActivity() {
+      if (!supabase) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+      setLoading(true)
+      const { data, error: queryError } = await supabase
+        .from('audit_logs')
+        .select('id, clinic_id, actor_user_id, table_name, record_id, action, metadata, created_at')
+        .eq('clinic_id', clinicId)
+        .order('created_at', { ascending: false })
+        .limit(250)
+      if (cancelled) return
+      if (queryError) {
+        setLoading(false)
+        setError('We could not load clinic activity.')
+        return
+      }
+
+      const rows = (data ?? []) as AuditLog[]
+      const actorIds = [...new Set(rows.map((row) => row.actor_user_id).filter((id): id is string => Boolean(id)))]
+      let names: Record<string, string> = {}
+      if (actorIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, display_name')
+          .in('id', actorIds)
+        names = Object.fromEntries(((profiles ?? []) as Array<{ id: string; display_name: string | null }>).map((profile) => [profile.id, profile.display_name?.trim() || profile.id]))
+      }
+      if (cancelled) return
+      setEvents(rows)
+      setActorNames(names)
+      setError(null)
+      setLoading(false)
+    }
+
+    void loadActivity()
+    return () => { cancelled = true }
+  }, [clinicId, refreshVersion])
+
+  const kinds = [...new Set(events.map((event) => `${event.table_name ?? ''}|${event.action ?? ''}`))]
+  const actors = [...new Set(events.map((event) => event.actor_user_id).filter((id): id is string => Boolean(id)))]
+  const visibleEvents = events.filter((event) =>
+    (!selectedDate || event.created_at.slice(0, 10) === selectedDate)
+    && (!selectedActor || event.actor_user_id === selectedActor)
+    && (!selectedKind || `${event.table_name ?? ''}|${event.action ?? ''}` === selectedKind),
+  )
+
+  return <div className="patients-page activity-page">
+    <div className="page-heading"><div><p className="eyebrow">Clinic accountability</p><h1>Audit / Activity</h1><p className="panel-copy">Activity history is available from the date auditing was enabled.</p></div><button className="button-secondary" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button></div>
+    <div className="activity-filters" aria-label="Activity filters">
+      <label>Date<input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label>
+      <label>Actor<select value={selectedActor} onChange={(event) => setSelectedActor(event.target.value)}><option value="">All actors</option>{actors.map((actorId) => <option key={actorId} value={actorId}>{actorNames[actorId] ?? actorId}</option>)}</select></label>
+      <label>Action / entity<select value={selectedKind} onChange={(event) => setSelectedKind(event.target.value)}><option value="">All activity</option>{kinds.map((kind) => {
+        const [tableName, action] = kind.split('|')
+        return <option key={kind} value={kind}>{`${tableName.replaceAll('_', ' ')} · ${action.replaceAll('_', ' ')}`}</option>
+      })}</select></label>
+    </div>
+    {loading && <div className="state-panel" role="status">Loading activity...</div>}
+    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
+    {!loading && !error && visibleEvents.length === 0 && <div className="state-panel"><p>No activity matches these filters.</p></div>}
+    {!loading && !error && visibleEvents.length > 0 && <div className="activity-list">{visibleEvents.map((event) => {
+      const details = auditDetailText(event.metadata)
+      return <article className="activity-entry" key={event.id}>
+        <div className="activity-entry-heading"><strong>{(event.action ?? 'activity').replaceAll('_', ' ')}</strong><time dateTime={event.created_at}>{formatDateTime(event.created_at)}</time></div>
+        <p>{(event.table_name ?? 'record').replaceAll('_', ' ')}{event.record_id ? ` · ${event.record_id}` : ''}</p>
+        <p className="activity-actor">{event.actor_user_id ? actorNames[event.actor_user_id] ?? event.actor_user_id : 'Unknown user'}</p>
+        {details && <p className="activity-details">{details}</p>}
+      </article>
+    })}</div>}
   </div>
 }
 
