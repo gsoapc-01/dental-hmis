@@ -207,7 +207,18 @@ function ClinicSetupScreen({ user }: { user: User }) {
 function ClinicShell({ context }: { context: MembershipContext }) {
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [activeModule, setActiveModule] = useState('Dashboard')
+  const [patientToOpen, setPatientToOpen] = useState<Patient | null>(null)
   const canViewFinance = context.membership.role === 'admin' || context.membership.role === 'receptionist'
+
+  function navigateToModule(module: string) {
+    setPatientToOpen(null)
+    setActiveModule(module)
+  }
+
+  function openPatientHistory(patient: Patient) {
+    setPatientToOpen(patient)
+    setActiveModule('Patients')
+  }
 
   async function handleLogout() {
     const error = await signOut()
@@ -220,21 +231,21 @@ function ClinicShell({ context }: { context: MembershipContext }) {
         <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{context.clinic.name}</p></div></div>
         <nav aria-label="Clinic modules">
           <p className="nav-label">Workspace</p>
-          <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => setActiveModule('Dashboard')} type="button"><span className="nav-dot" />Dashboard</button>
+          <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => navigateToModule('Dashboard')} type="button"><span className="nav-dot" />Dashboard</button>
           <span className="nav-item"><span className="nav-dot" />Clinical Visits</span>
-          <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => setActiveModule('Appointments')} type="button"><span className="nav-dot" />Appointments</button>
+          <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => navigateToModule('Appointments')} type="button"><span className="nav-dot" />Appointments</button>
           <p className="nav-label nav-label-spaced">Management</p>
-          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => setActiveModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
-          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => setActiveModule('Reports')} type="button"><span className="nav-dot" />Reports</button>}
-          {context.membership.role === 'admin' && <button className={`nav-item nav-button${activeModule === 'Staff' ? ' active' : ''}`} onClick={() => setActiveModule('Staff')} type="button"><span className="nav-dot" />Staff</button>}
-          {['Prescriptions', 'Investigations'].map((item) => <span className={`nav-item${activeModule === item ? ' active' : ''}`} key={item}><span className="nav-dot" />{item}</span>)}
-          <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => setActiveModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
+          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => navigateToModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
+          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => navigateToModule('Reports')} type="button"><span className="nav-dot" />Reports</button>}
+          {context.membership.role === 'admin' && <button className={`nav-item nav-button${activeModule === 'Staff' ? ' active' : ''}`} onClick={() => navigateToModule('Staff')} type="button"><span className="nav-dot" />Staff</button>}
+          {['Prescriptions', 'Investigations'].map((item) => <button className={`nav-item nav-button${activeModule === item ? ' active' : ''}`} key={item} onClick={() => navigateToModule(item)} type="button"><span className="nav-dot" />{item}</button>)}
+          <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => navigateToModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
         </nav>
         <div className="user-area"><div className="user-summary"><div className="avatar">{(context.user.email?.[0] ?? 'U').toUpperCase()}</div><div><p>{context.user.email ?? 'Signed-in user'}</p><p className="role">{context.membership.role}</p></div></div><button className="button-secondary" onClick={handleLogout}>Log out</button>{logoutError && <p className="form-error" role="alert">{logoutError}</p>}</div>
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={context.clinic.id} userId={context.user.id} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => setActiveModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={context.clinic.id} userId={context.user.id} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
       </section>
     </main>
   )
@@ -880,6 +891,187 @@ async function loadClinicianNames(userIds: string[]) {
   ]))
 }
 
+type ClinicalRecordReference = { patient_id: string; visit_id: string; doctor_id: string }
+type ClinicalRecordContext = {
+  patients: Record<string, Patient>
+  visitDates: Record<string, string>
+  doctorNames: Record<string, string>
+}
+
+async function loadClinicalRecordContext(clinicId: string, records: ClinicalRecordReference[]): Promise<ClinicalRecordContext | null> {
+  const client = supabase
+  if (!client || records.length === 0) return null
+
+  const patientIds = [...new Set(records.map((record) => record.patient_id))]
+  const visitIds = [...new Set(records.map((record) => record.visit_id))]
+  const doctorIds = [...new Set(records.map((record) => record.doctor_id))]
+  const [patientResult, visitResult, doctorNames] = await Promise.all([
+    client.from('patients').select('*').eq('clinic_id', clinicId).in('id', patientIds),
+    client.from('visits').select('id, visit_date').eq('clinic_id', clinicId).in('id', visitIds),
+    loadClinicianNames(doctorIds),
+  ])
+
+  if (patientResult.error || visitResult.error) return null
+  const patients = (patientResult.data ?? []) as Patient[]
+  const visits = (visitResult.data ?? []) as Array<Pick<Visit, 'id' | 'visit_date'>>
+  return {
+    patients: Object.fromEntries(patients.map((patient) => [patient.id, patient])),
+    visitDates: Object.fromEntries(visits.map((visit) => [visit.id, visit.visit_date])),
+    doctorNames,
+  }
+}
+
+function RecordPatientContext({ patient, visitDate, doctorName, onViewPatient }: { patient: Patient | undefined; visitDate: string | undefined; doctorName: string; onViewPatient: (patient: Patient) => void }) {
+  const patientName = patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : null
+
+  return <div className="clinical-record-context">
+    {patientName && <strong>{patientName}</strong>}
+    {patient?.patient_number && <span>File {patient.patient_number}</span>}
+    {visitDate && <span>Visit {formatDateTime(visitDate)}</span>}
+    <span>{doctorName}</span>
+    {patient && <button className="button-secondary inline-button" onClick={() => onViewPatient(patient)} type="button">View Patient / History</button>}
+  </div>
+}
+
+function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
+  const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPrescriptions() {
+      const client = supabase
+      if (!client) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+      const { data, error: queryError } = await client
+        .from('prescriptions')
+        .select('*')
+        .eq('clinic_id', clinicId)
+        .order('created_at', { ascending: false })
+
+      if (cancelled) return
+      if (queryError) {
+        setLoading(false)
+        setError('We could not load prescriptions for this clinic.')
+        return
+      }
+
+      const rows = (data ?? []) as Prescription[]
+      const context = await loadClinicalRecordContext(clinicId, rows.map((row) => ({
+        patient_id: row.patient_id,
+        visit_id: row.visit_id,
+        doctor_id: row.prescribing_doctor_id,
+      })))
+      if (cancelled) return
+      if (rows.length > 0 && !context) {
+        setLoading(false)
+        setError('We could not load the linked patient and visit details.')
+        return
+      }
+      setPrescriptions(rows)
+      setRecordContext(context)
+      setLoading(false)
+    }
+
+    void loadPrescriptions()
+    return () => { cancelled = true }
+  }, [clinicId])
+
+  return <div className="patients-page">
+    <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Prescriptions</h1><p className="panel-copy">Prescriptions recorded during patient visits.</p></div></div>
+    {loading && <p className="inline-state" role="status">Loading prescriptions...</p>}
+    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
+    {!loading && !error && prescriptions.length === 0 && <div className="state-panel"><h2>No prescriptions recorded</h2></div>}
+    {!loading && !error && prescriptions.length > 0 && <div className="clinical-record-list">{prescriptions.map((prescription) => {
+      const patient = recordContext?.patients[prescription.patient_id]
+      const details = [prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean)
+      const doctorName = recordContext?.doctorNames[prescription.prescribing_doctor_id] ?? 'Clinic doctor'
+      return <article className="clinical-record" key={prescription.id}>
+        <RecordPatientContext patient={patient} visitDate={recordContext?.visitDates[prescription.visit_id]} doctorName={`Prescribed by ${doctorName}`} onViewPatient={onViewPatient} />
+        <strong>{prescription.medicine}</strong>
+        {details.length > 0 && <p>{details.join(' · ')}</p>}
+        {prescription.quantity !== null && prescription.quantity !== undefined && <p>Quantity: {prescription.quantity}</p>}
+        {prescription.instructions && <p>{prescription.instructions}</p>}
+      </article>
+    })}</div>}
+  </div>
+}
+
+function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
+  const [investigations, setInvestigations] = useState<Investigation[]>([])
+  const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadInvestigations() {
+      const client = supabase
+      if (!client) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+      const { data, error: queryError } = await client
+        .from('investigations')
+        .select('*')
+        .eq('clinic_id', clinicId)
+        .order('created_at', { ascending: false })
+
+      if (cancelled) return
+      if (queryError) {
+        setLoading(false)
+        setError('We could not load investigations for this clinic.')
+        return
+      }
+
+      const rows = (data ?? []) as Investigation[]
+      const context = await loadClinicalRecordContext(clinicId, rows.map((row) => ({
+        patient_id: row.patient_id,
+        visit_id: row.visit_id,
+        doctor_id: row.requesting_doctor_id,
+      })))
+      if (cancelled) return
+      if (rows.length > 0 && !context) {
+        setLoading(false)
+        setError('We could not load the linked patient and visit details.')
+        return
+      }
+      setInvestigations(rows)
+      setRecordContext(context)
+      setLoading(false)
+    }
+
+    void loadInvestigations()
+    return () => { cancelled = true }
+  }, [clinicId])
+
+  return <div className="patients-page">
+    <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Investigations</h1><p className="panel-copy">Investigations requested during patient visits.</p></div></div>
+    {loading && <p className="inline-state" role="status">Loading investigations...</p>}
+    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
+    {!loading && !error && investigations.length === 0 && <div className="state-panel"><h2>No investigations recorded</h2></div>}
+    {!loading && !error && investigations.length > 0 && <div className="clinical-record-list">{investigations.map((investigation) => {
+      const patient = recordContext?.patients[investigation.patient_id]
+      const doctorName = recordContext?.doctorNames[investigation.requesting_doctor_id] ?? 'Clinic doctor'
+      const resultDate = investigation.result_date ? formatDate(investigation.result_date) : null
+      return <article className="clinical-record" key={investigation.id}>
+        <RecordPatientContext patient={patient} visitDate={recordContext?.visitDates[investigation.visit_id]} doctorName={`Requested by ${doctorName}`} onViewPatient={onViewPatient} />
+        <strong>{investigation.investigation_type}</strong>
+        {(investigation.status || investigation.result || resultDate) && <p>{[investigation.status, investigation.result, resultDate].filter(Boolean).join(' · ')}</p>}
+        {investigation.notes && <p>{investigation.notes}</p>}
+      </article>
+    })}</div>}
+  </div>
+}
+
 type AppointmentView = 'upcoming' | 'today' | 'waiting'
 
 function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId: string; role: UserRole }) {
@@ -1253,14 +1445,14 @@ const initialPatientForm: PatientFormValues = {
   address: '',
 }
 
-function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string }) {
+function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel, patientToOpen }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [showRegistration, setShowRegistration] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(() => patientToOpen)
   const [refreshVersion, setRefreshVersion] = useState(0)
 
   useEffect(() => {
