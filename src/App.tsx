@@ -7,6 +7,8 @@ import { supabase } from './lib/supabase'
 import type { Appointment, AppointmentStatus, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
+const clinicCurrencies = ['TZS', 'KES', 'UGX', 'USD'] as const
+type ClinicCurrency = (typeof clinicCurrencies)[number]
 
 type MembershipContext = {
   clinic: Clinic
@@ -218,7 +220,9 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   const [activeModule, setActiveModule] = useState('Dashboard')
   const [patientToOpen, setPatientToOpen] = useState<Patient | null>(null)
   const [printableDocument, setPrintableDocument] = useState<PrintableDocument | null>(null)
+  const [clinic, setClinic] = useState(context.clinic)
   const canViewFinance = context.membership.role === 'admin' || context.membership.role === 'receptionist'
+  const canManageClinicSettings = context.membership.role === 'admin' && context.membership.is_active
 
   function navigateToModule(module: string) {
     setPatientToOpen(null)
@@ -231,15 +235,15 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   }
 
   function viewReceipt(patient: Patient, invoice: Invoice, payment: Payment) {
-    setPrintableDocument({ type: 'receipt', clinic: context.clinic, patient, invoice, payment })
+    setPrintableDocument({ type: 'receipt', clinic, patient, invoice, payment })
   }
 
   function printVisitSummary(patient: Patient, visit: Visit, clinicianName: string, prescriptions: Prescription[], investigations: Investigation[]) {
-    setPrintableDocument({ type: 'visit', clinic: context.clinic, patient, visit, clinicianName, prescriptions, investigations })
+    setPrintableDocument({ type: 'visit', clinic, patient, visit, clinicianName, prescriptions, investigations })
   }
 
   function printReport(data: ReportsData, startDate: string, endDate: string) {
-    setPrintableDocument({ type: 'report', clinic: context.clinic, data, startDate, endDate, generatedAt: new Date().toISOString() })
+    setPrintableDocument({ type: 'report', clinic, data, startDate, endDate, generatedAt: new Date().toISOString() })
   }
 
   async function handleLogout() {
@@ -250,7 +254,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   return <>
     <main className="shell">
       <aside className="sidebar">
-        <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{context.clinic.name}</p></div></div>
+        <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{clinic.name}</p></div></div>
         <nav aria-label="Clinic modules">
           <p className="nav-label">Workspace</p>
           <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => navigateToModule('Dashboard')} type="button"><span className="nav-dot" />Dashboard</button>
@@ -260,6 +264,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => navigateToModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => navigateToModule('Reports')} type="button"><span className="nav-dot" />Reports</button>}
           {context.membership.role === 'admin' && <button className={`nav-item nav-button${activeModule === 'Staff' ? ' active' : ''}`} onClick={() => navigateToModule('Staff')} type="button"><span className="nav-dot" />Staff</button>}
+          {canManageClinicSettings && <button className={`nav-item nav-button${activeModule === 'Settings' ? ' active' : ''}`} onClick={() => navigateToModule('Settings')} type="button"><span className="nav-dot" />Settings</button>}
           {['Prescriptions', 'Investigations'].map((item) => <button className={`nav-item nav-button${activeModule === item ? ' active' : ''}`} key={item} onClick={() => navigateToModule(item)} type="button"><span className="nav-dot" />{item}</button>)}
           <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => navigateToModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
         </nav>
@@ -267,11 +272,61 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={context.clinic.id} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={context.clinic.id} userId={context.user.id} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
       </section>
     </main>
     {printableDocument && <PrintableDocumentPreview document={printableDocument} onClose={() => setPrintableDocument(null)} />}
   </>
+}
+
+function ClinicSettingsView({ clinic, onUpdated }: { clinic: Clinic; onUpdated: (clinic: Clinic) => void }) {
+  const [currency, setCurrency] = useState(() => clinicCurrencies.includes(clinic.currency as ClinicCurrency) ? clinic.currency : '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!clinicCurrencies.some((supportedCurrency) => supportedCurrency === currency)) {
+      setError('Select a supported clinic currency.')
+      return
+    }
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    setSuccess(null)
+    const { data, error: updateError } = await supabase.rpc('update_clinic_currency', {
+      p_clinic_id: clinic.id,
+      p_currency: currency,
+    } as never)
+    setSaving(false)
+    if (updateError || !data) {
+      setError('We could not update the clinic currency. Please try again.')
+      return
+    }
+
+    const updatedClinic = data as Clinic
+    onUpdated(updatedClinic)
+    setCurrency(updatedClinic.currency)
+    setSuccess(`Clinic currency updated to ${updatedClinic.currency}.`)
+  }
+
+  return <div className="clinic-settings-page">
+    <div className="page-heading"><div><p className="eyebrow">Clinic management</p><h1>Settings</h1><p className="panel-copy">Manage settings for {clinic.name}.</p></div></div>
+    <section className="registration-panel clinic-currency-panel">
+      <div className="registration-heading"><p className="eyebrow">Financial settings</p><h2>Operating currency</h2><p className="panel-copy">Currency changes apply to future invoices. Existing invoices keep their recorded currency.</p></div>
+      <form className="clinic-currency-form" onSubmit={(event) => void handleSubmit(event)}>
+        <label>Clinic currency<select value={currency} onChange={(event) => setCurrency(event.target.value)} required><option value="">Select currency</option>{clinicCurrencies.map((supportedCurrency) => <option key={supportedCurrency} value={supportedCurrency}>{supportedCurrency}</option>)}</select></label>
+        <button className="primary-action" type="submit" disabled={saving || !clinicCurrencies.some((supportedCurrency) => supportedCurrency === currency)}>{saving ? 'Saving...' : 'Save currency'}</button>
+      </form>
+      {success && <p className="clinic-settings-success" role="status">{success}</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </section>
+  </div>
 }
 
 type DashboardAppointment = Pick<Appointment, 'id' | 'patient_id' | 'doctor_id' | 'appointment_date' | 'start_time' | 'end_time' | 'service' | 'status'>
@@ -1563,7 +1618,7 @@ const initialPatientForm: PatientFormValues = {
   address: '',
 }
 
-function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel, patientToOpen, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
+function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patientToOpen, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1632,7 +1687,7 @@ function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel, pati
       </div>
       {success && <div className="state-panel state-success" role="status">{success}</div>}
       {showRegistration && <PatientRegistrationForm clinicId={clinicId} onCancel={() => setShowRegistration(false)} onRegistered={handleRegistered} />}
-      {selectedPatient && <PatientProfile clinicId={clinicId} clinicName={clinicName} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => setSelectedPatient(null)} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />}
+      {selectedPatient && <PatientProfile clinicId={clinicId} clinicName={clinicName} clinicTimezone={clinicTimezone} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => setSelectedPatient(null)} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />}
       {!selectedPatient && <>
         <div className="patient-toolbar"><label className="search-field"><span>Search patients</span><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="File number, name, or phone" type="search" /></label><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
         {loading && <div className="state-panel" role="status">Loading patients...</div>}
@@ -1801,8 +1856,8 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
     const ageInput = form.approximate_age_years.trim()
     const approximateAge = ageInput ? Number(ageInput) : null
 
-    if (!firstName || !lastName || !form.gender) {
-      setError('First name, last name, and gender are required.')
+    if (!firstName || !lastName) {
+      setError('First name and last name are required.')
       return
     }
     if (email && !isValidEmail(email)) {
@@ -1855,7 +1910,7 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
         <label>First name<input value={form.first_name} onChange={(event) => updateField('first_name', event.target.value)} autoComplete="given-name" required /></label>
         <label>Middle name<input value={form.middle_name} onChange={(event) => updateField('middle_name', event.target.value)} autoComplete="additional-name" /></label>
         <label>Last name<input value={form.last_name} onChange={(event) => updateField('last_name', event.target.value)} autoComplete="family-name" required /></label>
-        <label>Gender<select value={form.gender} onChange={(event) => updateField('gender', event.target.value)}><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
+        <label>Gender<select value={form.gender} onChange={(event) => updateField('gender', event.target.value)}><option value="">Not specified</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
         <label>Date of birth<input type="date" value={form.date_of_birth} onChange={(event) => updateField('date_of_birth', event.target.value)} /></label>
         <label>Approximate age (years)<input type="number" min="0" max="130" step="1" value={form.approximate_age_years} onChange={(event) => updateField('approximate_age_years', event.target.value)} placeholder="Use if DOB is unknown" /></label>
         <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>
@@ -1879,7 +1934,7 @@ function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (
   )
 }
 
-function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, patient, onBack, onUpdated, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; onBack: () => void; onUpdated: (patient: Patient) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
+function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patient, onBack, onUpdated, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; onBack: () => void; onUpdated: (patient: Patient) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
   const [editing, setEditing] = useState(false)
   const [visits, setVisits] = useState<Visit[]>([])
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({})
@@ -1979,7 +2034,7 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
       {!editing ? <>
         <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button><button className="button-secondary profile-secondary-action" onClick={() => { setAppointmentSuccess(null); setShowAppointmentForm(true) }} type="button">Book Appointment</button><button className="primary-action" disabled={role === 'receptionist' || role === 'patient'} onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }} type="button">New Visit</button></div></div>
         <div className="profile-grid"><section className="profile-card"><p className="card-label">Personal details</p><dl className="detail-list"><DetailItem label="Full name" value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} /><DetailItem label="Gender" value={patient.gender} /><DetailItem label="Date of birth" value={formatDate(patient.date_of_birth)} /><DetailItem label="Age" value={formatPatientAge(patient)} /><DetailItem label="Registered" value={formatDate(patient.created_at)} /></dl></section><section className="profile-card"><p className="card-label">Contact details</p><dl className="detail-list"><DetailItem label="Phone" value={patient.phone} /><DetailItem label="Email" value={patient.email} /><DetailItem label="Address" value={patient.address} /></dl></section></div>
-        {showAppointmentForm && <AppointmentForm clinicId={clinicId} userId={userId} patient={patient} onCancel={() => setShowAppointmentForm(false)} onCreated={(appointment) => { setShowAppointmentForm(false); setAppointmentSuccess(`Appointment booked for ${formatDate(appointment.appointment_date)} at ${formatTime(appointment.start_time)}.`) }} />}
+        {showAppointmentForm && <AppointmentForm clinicId={clinicId} timezone={clinicTimezone} userId={userId} patient={patient} onCancel={() => setShowAppointmentForm(false)} onCreated={(appointment) => { setShowAppointmentForm(false); setAppointmentSuccess(`Appointment booked for ${formatDate(appointment.appointment_date)} at ${formatTime(appointment.start_time)}.`) }} />}
         {appointmentSuccess && <div className="state-panel state-success" role="status">{appointmentSuccess}</div>}
         {role === 'receptionist' && <p className="role-note">A doctor or clinic administrator must be signed in to create a clinical visit.</p>}
         {showVisitForm && <NewVisitForm clinicId={clinicId} patientId={patient.id} doctorId={userId} clinicianLabel={clinicianLabel} onCancel={() => setShowVisitForm(false)} onCreated={handleVisitCreated} />}
@@ -2494,12 +2549,12 @@ type AppointmentFormValues = {
   notes: string
 }
 
-function todayInputValue() {
-  return new Date().toISOString().slice(0, 10)
+function todayInputValue(timezone: string) {
+  return getClinicLocalDate(new Date(), timezone)
 }
 
 const initialAppointmentForm: AppointmentFormValues = {
-  appointment_date: todayInputValue(),
+  appointment_date: '',
   start_time: '',
   end_time: '',
   doctor_id: '',
@@ -2507,8 +2562,8 @@ const initialAppointmentForm: AppointmentFormValues = {
   notes: '',
 }
 
-function AppointmentForm({ clinicId, userId, patient, onCancel, onCreated }: { clinicId: string; userId: string; patient: Patient; onCancel: () => void; onCreated: (appointment: Appointment) => void }) {
-  const [form, setForm] = useState<AppointmentFormValues>(initialAppointmentForm)
+function AppointmentForm({ clinicId, timezone, userId, patient, onCancel, onCreated }: { clinicId: string; timezone: string; userId: string; patient: Patient; onCancel: () => void; onCreated: (appointment: Appointment) => void }) {
+  const [form, setForm] = useState<AppointmentFormValues>(() => ({ ...initialAppointmentForm, appointment_date: todayInputValue(timezone) }))
   const [doctors, setDoctors] = useState<DoctorOption[]>([])
   const [loadingDoctors, setLoadingDoctors] = useState(true)
   const [doctorError, setDoctorError] = useState<string | null>(null)
@@ -2583,7 +2638,7 @@ function AppointmentForm({ clinicId, userId, patient, onCancel, onCreated }: { c
       {!loadingDoctors && !doctorError && <form className="patient-form" onSubmit={handleSubmit}>
         <label>Patient<input value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} readOnly /></label>
         <label>Doctor<select value={form.doctor_id} onChange={(event) => updateField('doctor_id', event.target.value)} required><option value="">Select doctor</option>{doctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}</select></label>
-        <label>Appointment date<input type="date" min={todayInputValue()} value={form.appointment_date} onChange={(event) => updateField('appointment_date', event.target.value)} required /></label>
+        <label>Appointment date<input type="date" min={todayInputValue(timezone)} value={form.appointment_date} onChange={(event) => updateField('appointment_date', event.target.value)} required /></label>
         <label>Status<select value="scheduled" disabled><option value="scheduled">Scheduled</option></select></label>
         <label>Start time<input type="time" value={form.start_time} onChange={(event) => updateField('start_time', event.target.value)} required /></label>
         <label>End time<input type="time" value={form.end_time} onChange={(event) => updateField('end_time', event.target.value)} required /></label>
@@ -2631,8 +2686,8 @@ function PatientEditForm({ clinicId, patient, onCancel, onSaved }: { clinicId: s
     const email = form.email.trim()
     const ageInput = form.approximate_age_years.trim()
     const approximateAge = ageInput ? Number(ageInput) : null
-    if (!firstName || !lastName || !form.gender) {
-      setError('First name, last name, and gender are required.')
+    if (!firstName || !lastName) {
+      setError('First name and last name are required.')
       return
     }
     if (email && !isValidEmail(email)) {
@@ -2658,7 +2713,7 @@ function PatientEditForm({ clinicId, patient, onCancel, onSaved }: { clinicId: s
       first_name: firstName,
       middle_name: form.middle_name.trim() || null,
       last_name: lastName,
-      gender: form.gender,
+      gender: form.gender.trim() || null,
       date_of_birth: form.date_of_birth || null,
       approximate_age_years: approximateAge,
       phone: form.phone.trim() || null,
@@ -2684,7 +2739,7 @@ function PatientEditForm({ clinicId, patient, onCancel, onSaved }: { clinicId: s
         <label>First name<input value={form.first_name} onChange={(event) => updateField('first_name', event.target.value)} autoComplete="given-name" required /></label>
         <label>Middle name<input value={form.middle_name} onChange={(event) => updateField('middle_name', event.target.value)} autoComplete="additional-name" /></label>
         <label>Last name<input value={form.last_name} onChange={(event) => updateField('last_name', event.target.value)} autoComplete="family-name" required /></label>
-        <label>Gender<select value={form.gender} onChange={(event) => updateField('gender', event.target.value)} required><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
+        <label>Gender<select value={form.gender} onChange={(event) => updateField('gender', event.target.value)}><option value="">Not specified</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
         <label>Date of birth<input type="date" value={form.date_of_birth} onChange={(event) => updateField('date_of_birth', event.target.value)} /></label>
         <label>Approximate age (years)<input type="number" min="0" max="130" step="1" value={form.approximate_age_years} onChange={(event) => updateField('approximate_age_years', event.target.value)} placeholder="Use if DOB is unknown" /></label>
         <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>

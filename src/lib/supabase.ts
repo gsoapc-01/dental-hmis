@@ -40,6 +40,10 @@ export interface Database {
         Args: { p_name: string }
         Returns: string
       }
+      update_clinic_currency: {
+        Args: { p_clinic_id: string; p_currency: string }
+        Returns: Clinic
+      }
       admin_change_clinic_staff_role: {
         Args: { p_clinic_id: string; p_target_user_id: string; p_new_role: UserRole }
         Returns: ClinicMembership
