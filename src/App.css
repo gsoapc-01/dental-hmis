@@ -566,3 +566,69 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .form-actions { justify-content: stretch; }
   .form-actions button { flex: 1; }
 }
+
+.visit-card-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.clinical-visit-patient { margin: -8px 0 12px; color: var(--slate-700); font-size: 13px; font-weight: 700; }
+.clinical-visit-record-count { margin: 12px 0 0; color: var(--slate-500); font-size: 11px; }
+.payment-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.payment-history-row .inline-button { flex: 0 0 auto; }
+.print-preview-overlay { position: fixed; z-index: 1000; inset: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; overflow: auto; padding: 20px; background: rgba(11, 31, 51, 0.72); }
+.print-preview-toolbar { width: min(100%, 210mm); display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #fff; }
+.print-preview-toolbar > div { display: flex; gap: 8px; }
+.print-document { width: min(100%, 210mm); min-height: 297mm; padding: 17mm; color: #172b3a; background: #fff; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24); font-family: 'Georgia', 'Times New Roman', serif; font-size: 11pt; line-height: 1.45; }
+.print-clinic-header { display: flex; align-items: center; gap: 16px; padding-bottom: 18px; border-bottom: 2px solid #172b3a; }
+.print-clinic-header img { flex: 0 0 auto; width: auto; max-width: 60px; max-height: 60px; object-fit: contain; }
+.print-clinic-header h2 { margin: 0; color: #172b3a; font-family: 'Segoe UI', sans-serif; font-size: 17pt; }
+.print-clinic-header p { margin: 3px 0 0; color: #496174; font-family: 'Segoe UI', sans-serif; font-size: 9pt; overflow-wrap: anywhere; }
+.print-document-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin: 24px 0 18px; }
+.print-document-heading p { margin: 0 0 4px; color: #496174; font-family: 'Segoe UI', sans-serif; font-size: 8pt; font-weight: 700; text-transform: uppercase; }
+.print-document-heading h1 { margin: 0; color: #102b44; font-family: 'Segoe UI', sans-serif; font-size: 19pt; line-height: 1.2; }
+.print-document-heading > div:last-child { display: grid; gap: 3px; text-align: right; }
+.print-document-heading span, .print-metadata-grid span { color: #496174; font-family: 'Segoe UI', sans-serif; font-size: 8pt; font-weight: 700; text-transform: uppercase; }
+.print-document-heading strong { color: #172b3a; font-family: 'Segoe UI', sans-serif; font-size: 11pt; }
+.print-metadata-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding: 14px 0; border-top: 1px solid #d7e1e7; border-bottom: 1px solid #d7e1e7; }
+.print-metadata-grid > div { display: grid; align-content: start; gap: 4px; }
+.print-metadata-grid strong { color: #172b3a; font-family: 'Segoe UI', sans-serif; font-size: 10pt; }
+.print-metadata-grid small { color: #496174; font-family: 'Segoe UI', sans-serif; font-size: 8.5pt; }
+.print-financial-table { margin-top: 24px; border-top: 1px solid #aab9c2; }
+.print-financial-table > div { display: flex; justify-content: space-between; gap: 20px; padding: 11px 2px; border-bottom: 1px solid #d7e1e7; }
+.print-financial-table span { color: #496174; font-family: 'Segoe UI', sans-serif; }
+.print-financial-table strong { color: #172b3a; font-family: 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; text-align: right; }
+.print-financial-table .print-payment-total { padding-top: 15px; padding-bottom: 15px; border-bottom: 2px solid #172b3a; }
+.print-payment-total span, .print-payment-total strong { color: #102b44; font-size: 13pt; font-weight: 800; }
+.print-document-footer { margin-top: 24px; padding-top: 10px; border-top: 1px solid #d7e1e7; color: #496174; font-family: 'Segoe UI', sans-serif; font-size: 8pt; }
+.print-visit-summary .print-document-heading { margin-bottom: 15px; }
+.print-clinical-field, .print-record-section { margin-top: 15px; break-inside: avoid; page-break-inside: avoid; }
+.print-clinical-field h2, .print-record-section > h2 { margin: 0 0 5px; color: #102b44; font-family: 'Segoe UI', sans-serif; font-size: 10pt; }
+.print-clinical-field p, .print-record-block p { margin: 3px 0 0; color: #172b3a; white-space: pre-wrap; overflow-wrap: anywhere; }
+.print-record-section > h2 { padding-bottom: 5px; border-bottom: 1px solid #aab9c2; }
+.print-record-block { margin-top: 8px; padding: 8px 10px; border: 1px solid #d7e1e7; break-inside: avoid; page-break-inside: avoid; }
+.print-record-block h3 { margin: 0; color: #172b3a; font-family: 'Segoe UI', sans-serif; font-size: 9.5pt; }
+.print-report-section { margin-top: 19px; }
+.print-report-section > h2 { margin: 0 0 8px; padding-bottom: 5px; border-bottom: 1px solid #aab9c2; color: #102b44; font-family: 'Segoe UI', sans-serif; font-size: 10pt; }
+.print-report-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.print-report-metrics > div { display: grid; gap: 4px; padding: 9px; border: 1px solid #d7e1e7; break-inside: avoid; page-break-inside: avoid; }
+.print-report-metrics span { color: #496174; font-family: 'Segoe UI', sans-serif; font-size: 8pt; font-weight: 700; }
+.print-report-metrics strong { color: #172b3a; font-family: 'Segoe UI', sans-serif; font-size: 10pt; overflow-wrap: anywhere; }
+.print-report-note { margin: 0 0 8px; color: #496174; font-family: 'Segoe UI', sans-serif; font-size: 8.5pt; }
+.print-report-table { width: 100%; border-collapse: collapse; color: #172b3a; font-family: 'Segoe UI', sans-serif; font-size: 9pt; }
+.print-report-table thead { display: table-header-group; }
+.print-report-table th, .print-report-table td { padding: 7px 8px; border-bottom: 1px solid #d7e1e7; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.print-report-table th { color: #102b44; background: #f1f5f7; font-size: 8pt; font-weight: 800; text-transform: uppercase; }
+.print-report-table tr { break-inside: avoid; page-break-inside: avoid; }
+.print-report-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
+@page { size: A4; margin: 14mm; }
+
+@media print {
+  html, body, #root { width: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; color: #111 !important; background: #fff !important; }
+  #root { display: block !important; }
+  .shell { display: none !important; }
+  .print-preview-overlay { position: static !important; inset: auto !important; display: block !important; overflow: visible !important; padding: 0 !important; background: #fff !important; }
+  .print-preview-toolbar { display: none !important; }
+  .print-document { width: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; color: #111 !important; background: #fff !important; font-size: 10pt; }
+  .print-document-footer { color: #444 !important; }
+  .print-clinical-field, .print-record-section, .print-record-block, .print-metadata-grid, .print-financial-table, .print-report-metrics > div { break-inside: avoid; page-break-inside: avoid; }
+  .print-clinic-header, .print-document-heading { break-inside: avoid; page-break-inside: avoid; }
+  *, *::before, *::after { box-shadow: none !important; text-shadow: none !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

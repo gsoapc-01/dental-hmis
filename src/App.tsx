@@ -14,6 +14,15 @@ type MembershipContext = {
   user: User
 }
 
+type PrintableDocument =
+  | { type: 'receipt'; clinic: Clinic; patient: Patient; invoice: Invoice; payment: Payment }
+  | { type: 'visit'; clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }
+  | { type: 'report'; clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string }
+
+type ViewReceipt = (patient: Patient, invoice: Invoice, payment: Payment) => void
+type PrintVisitSummary = (patient: Patient, visit: Visit, clinicianName: string, prescriptions: Prescription[], investigations: Investigation[]) => void
+type PrintReport = (data: ReportsData, startDate: string, endDate: string) => void
+
 function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('loading')
   const [session, setSession] = useState<Session | null>(null)
@@ -208,6 +217,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [activeModule, setActiveModule] = useState('Dashboard')
   const [patientToOpen, setPatientToOpen] = useState<Patient | null>(null)
+  const [printableDocument, setPrintableDocument] = useState<PrintableDocument | null>(null)
   const canViewFinance = context.membership.role === 'admin' || context.membership.role === 'receptionist'
 
   function navigateToModule(module: string) {
@@ -220,19 +230,31 @@ function ClinicShell({ context }: { context: MembershipContext }) {
     setActiveModule('Patients')
   }
 
+  function viewReceipt(patient: Patient, invoice: Invoice, payment: Payment) {
+    setPrintableDocument({ type: 'receipt', clinic: context.clinic, patient, invoice, payment })
+  }
+
+  function printVisitSummary(patient: Patient, visit: Visit, clinicianName: string, prescriptions: Prescription[], investigations: Investigation[]) {
+    setPrintableDocument({ type: 'visit', clinic: context.clinic, patient, visit, clinicianName, prescriptions, investigations })
+  }
+
+  function printReport(data: ReportsData, startDate: string, endDate: string) {
+    setPrintableDocument({ type: 'report', clinic: context.clinic, data, startDate, endDate, generatedAt: new Date().toISOString() })
+  }
+
   async function handleLogout() {
     const error = await signOut()
     if (error) setLogoutError('Sign-out failed. Please try again.')
   }
 
-  return (
+  return <>
     <main className="shell">
       <aside className="sidebar">
         <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{context.clinic.name}</p></div></div>
         <nav aria-label="Clinic modules">
           <p className="nav-label">Workspace</p>
           <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => navigateToModule('Dashboard')} type="button"><span className="nav-dot" />Dashboard</button>
-          <span className="nav-item"><span className="nav-dot" />Clinical Visits</span>
+          <button className={`nav-item nav-button${activeModule === 'Clinical Visits' ? ' active' : ''}`} onClick={() => navigateToModule('Clinical Visits')} type="button"><span className="nav-dot" />Clinical Visits</button>
           <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => navigateToModule('Appointments')} type="button"><span className="nav-dot" />Appointments</button>
           <p className="nav-label nav-label-spaced">Management</p>
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => navigateToModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
@@ -245,10 +267,11 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={context.clinic.id} userId={context.user.id} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={context.clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={context.clinic.id} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Patients' ? <PatientsView clinicId={context.clinic.id} clinicName={context.clinic.name} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={context.clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={context.clinic.id} clinicName={context.clinic.name} currency={context.clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={context.clinic.id} timezone={context.clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={context.clinic.id} userId={context.user.id} /> : <DashboardView clinicId={context.clinic.id} clinicName={context.clinic.name} timezone={context.clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
       </section>
     </main>
-  )
+    {printableDocument && <PrintableDocumentPreview document={printableDocument} onClose={() => setPrintableDocument(null)} />}
+  </>
 }
 
 type DashboardAppointment = Pick<Appointment, 'id' | 'patient_id' | 'doctor_id' | 'appointment_date' | 'start_time' | 'end_time' | 'service' | 'status'>
@@ -636,7 +659,102 @@ type ReportsData = {
   doctorActivity: Array<{ id: string; label: string; appointments: number; visits: number }>
 }
 
-function ReportsView({ clinicId, timezone }: { clinicId: string; timezone: string }) {
+function ClinicalVisitsView({ clinicId, onPrintVisitSummary }: { clinicId: string; onPrintVisitSummary: PrintVisitSummary }) {
+  const [visits, setVisits] = useState<Visit[]>([])
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
+  const [investigations, setInvestigations] = useState<Investigation[]>([])
+  const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadClinicalVisits() {
+      const client = supabase
+      if (!client) {
+        setLoading(false)
+        setError('Supabase is not configured.')
+        return
+      }
+
+      const { data: visitData, error: visitError } = await client
+        .from('visits')
+        .select('*')
+        .eq('clinic_id', clinicId)
+        .order('visit_date', { ascending: false })
+      if (cancelled) return
+      if (visitError) {
+        setLoading(false)
+        setError('We could not load this clinic\'s clinical visits.')
+        return
+      }
+
+      const visitRows = (visitData ?? []) as Visit[]
+      if (visitRows.length === 0) {
+        setVisits([])
+        setPrescriptions([])
+        setInvestigations([])
+        setRecordContext(null)
+        setLoading(false)
+        return
+      }
+
+      const visitIds = visitRows.map((visit) => visit.id)
+      const [prescriptionResult, investigationResult] = await Promise.all([
+        client.from('prescriptions').select('*').eq('clinic_id', clinicId).in('visit_id', visitIds),
+        client.from('investigations').select('*').eq('clinic_id', clinicId).in('visit_id', visitIds),
+      ])
+      if (cancelled) return
+      if (prescriptionResult.error || investigationResult.error) {
+        setLoading(false)
+        setError('We could not load this clinic\'s visit records.')
+        return
+      }
+
+      const context = await loadClinicalRecordContext(clinicId, visitRows.map((visit) => ({
+        patient_id: visit.patient_id,
+        visit_id: visit.id,
+        doctor_id: visit.doctor_id,
+      })))
+      if (cancelled) return
+      if (!context) {
+        setLoading(false)
+        setError('We could not load linked patient and clinician details.')
+        return
+      }
+      setVisits(visitRows)
+      setPrescriptions((prescriptionResult.data ?? []) as Prescription[])
+      setInvestigations((investigationResult.data ?? []) as Investigation[])
+      setRecordContext(context)
+      setLoading(false)
+    }
+
+    void loadClinicalVisits()
+    return () => { cancelled = true }
+  }, [clinicId])
+
+  return <div className="patients-page">
+    <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Clinical Visits</h1><p className="panel-copy">Review clinic visits and print a visit-specific summary.</p></div></div>
+    {loading && <p className="inline-state" role="status">Loading clinical visits...</p>}
+    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
+    {!loading && !error && visits.length === 0 && <div className="state-panel"><h2>No clinical visits recorded</h2></div>}
+    {!loading && !error && visits.length > 0 && <div className="visit-list">{visits.map((visit) => {
+      const patient = recordContext?.patients[visit.patient_id]
+      const clinicianName = recordContext?.doctorNames[visit.doctor_id] ?? 'Clinic doctor'
+      const visitPrescriptions = prescriptions.filter((prescription) => prescription.visit_id === visit.id)
+      const visitInvestigations = investigations.filter((investigation) => investigation.visit_id === visit.id)
+      return <article className="visit-card" key={visit.id}>
+        <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">{clinicianName}</p></div>{patient && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianName, visitPrescriptions, visitInvestigations)} type="button">Print Visit Summary</button>}</div>
+        {patient && <p className="clinical-visit-patient">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p>}
+        <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}</div>
+        <p className="clinical-visit-record-count">{visitPrescriptions.length} {visitPrescriptions.length === 1 ? 'prescription' : 'prescriptions'} · {visitInvestigations.length} {visitInvestigations.length === 1 ? 'investigation' : 'investigations'}</p>
+      </article>
+    })}</div>}
+  </div>
+}
+
+function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; timezone: string; onPrintReport: PrintReport }) {
   const today = getClinicLocalDate(new Date(), timezone)
   const [startDate, setStartDate] = useState(`${today.slice(0, 7)}-01`)
   const [endDate, setEndDate] = useState(today)
@@ -735,7 +853,7 @@ function ReportsView({ clinicId, timezone }: { clinicId: string; timezone: strin
   const totals = (values: Record<string, number>) => Object.entries(values).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <span key={currency}>{formatMoney(amount, currency)}</span>)
 
   return <div className="reports-page">
-    <div className="page-heading"><div><p className="eyebrow">Clinic operations</p><h1>Reports</h1><p className="panel-copy">Period activity and current balances.</p></div></div>
+    <div className="page-heading"><div><p className="eyebrow">Clinic operations</p><h1>Reports</h1><p className="panel-copy">Period activity and current balances.</p></div>{!loading && !error && data && <button className="primary-action" onClick={() => onPrintReport(data, effectiveStart, effectiveEnd)} type="button">Print Report</button>}</div>
     <div className="report-date-range"><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>Through<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label></div>
     {error && <div className="state-panel state-error" role="alert">{error}</div>}
     {loading && <p className="inline-state" role="status">Loading reports...</p>}
@@ -1445,7 +1563,7 @@ const initialPatientForm: PatientFormValues = {
   address: '',
 }
 
-function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel, patientToOpen }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null }) {
+function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel, patientToOpen, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1514,7 +1632,7 @@ function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel, pati
       </div>
       {success && <div className="state-panel state-success" role="status">{success}</div>}
       {showRegistration && <PatientRegistrationForm clinicId={clinicId} onCancel={() => setShowRegistration(false)} onRegistered={handleRegistered} />}
-      {selectedPatient && <PatientProfile clinicId={clinicId} clinicName={clinicName} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => setSelectedPatient(null)} onUpdated={handlePatientUpdated} />}
+      {selectedPatient && <PatientProfile clinicId={clinicId} clinicName={clinicName} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => setSelectedPatient(null)} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />}
       {!selectedPatient && <>
         <div className="patient-toolbar"><label className="search-field"><span>Search patients</span><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="File number, name, or phone" type="search" /></label><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
         {loading && <div className="state-panel" role="status">Loading patients...</div>}
@@ -1527,7 +1645,7 @@ function PatientsView({ clinicId, clinicName, userId, role, clinicianLabel, pati
   )
 }
 
-function BillingView({ clinicId, clinicName, currency }: { clinicId: string; clinicName: string; currency: string }) {
+function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinicId: string; clinicName: string; currency: string; onViewReceipt: ViewReceipt }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
@@ -1654,8 +1772,8 @@ function BillingView({ clinicId, clinicName, currency }: { clinicId: string; cli
         {loadingBilling && <p className="inline-state" role="status">Loading billing history...</p>}
         {!loadingBilling && error && <div className="state-panel state-error" role="alert">{error}</div>}
         {!loadingBilling && !error && invoiceableVisits.length === 0 && invoices.length === 0 && <div className="state-panel"><h2>No invoiceable visits</h2><p>Completed appointment visits and manual visits will appear here.</p></div>}
-        {!loadingBilling && !error && invoiceableVisits.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Billing</p><h3>Invoiceable visits</h3></div><span className="history-count">{invoiceableVisits.length} {invoiceableVisits.length === 1 ? 'visit' : 'visits'}</span></div><div className="visit-list">{invoiceableVisits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel="Clinic clinician" prescriptions={[]} investigations={[]} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={selectedPatient} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} />)}</div></section>}
-        {!loadingBilling && !error && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={selectedPatient} canRecordPayment onPaymentRecorded={handlePaymentRecorded} />)}</div></section>}
+        {!loadingBilling && !error && invoiceableVisits.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Billing</p><h3>Invoiceable visits</h3></div><span className="history-count">{invoiceableVisits.length} {invoiceableVisits.length === 1 ? 'visit' : 'visits'}</span></div><div className="visit-list">{invoiceableVisits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel="Clinic clinician" prescriptions={[]} investigations={[]} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={selectedPatient} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} />)}</div></section>}
+        {!loadingBilling && !error && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={selectedPatient} canRecordPayment onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} />)}</div></section>}
       </>}
     </div>
   )
@@ -1761,7 +1879,7 @@ function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (
   )
 }
 
-function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, patient, onBack, onUpdated }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; onBack: () => void; onUpdated: (patient: Patient) => void }) {
+function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, patient, onBack, onUpdated, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; onBack: () => void; onUpdated: (patient: Patient) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
   const [editing, setEditing] = useState(false)
   const [visits, setVisits] = useState<Visit[]>([])
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({})
@@ -1870,9 +1988,9 @@ function PatientProfile({ clinicId, clinicName, userId, role, clinicianLabel, pa
           {visitLoading && <p className="inline-state" role="status">Loading visit history...</p>}
           {!visitLoading && visitError && <p className="form-error" role="alert">{visitError}</p>}
           {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
-          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={doctorNames[visit.doctor_id] ?? (visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician')} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} />)}</div>}
+          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={doctorNames[visit.doctor_id] ?? (visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician')} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />)}</div>}
         </section>
-        {canViewFinance && !visitLoading && !visitError && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={role === 'admin' || role === 'receptionist'} onPaymentRecorded={handlePaymentRecorded} />)}</div></section>}
+        {canViewFinance && !visitLoading && !visitError && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={role === 'admin' || role === 'receptionist'} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} />)}</div></section>}
       </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}
     </section>
   )
@@ -1985,22 +2103,22 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
   return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <p className="form-error" role="alert">{error}</p>}</section>
 }
 
-function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void }) {
+function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary }) {
   const canViewDentalChart = (role === 'admin' || role === 'doctor') && Boolean(userId)
   const canAddDentalEntries = role === 'admin' || (role === 'doctor' && visit.doctor_id === userId)
 
   return (
     <article className={`visit-card${isLatest ? ' latest' : ''}`}>
-      <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div>{isLatest && <span className="latest-badge">Latest</span>}</div>
+      <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div><div className="visit-card-actions">{isLatest && <span className="latest-badge">Latest</span>}{onPrintVisitSummary && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianLabel, prescriptions, investigations)} type="button">Print Visit Summary</button>}</div></div>
       <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
       <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
       {canViewDentalChart && userId && <DentalChart clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && visit.appointment_id === null} />}
-      {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <p className="inline-state">No invoice for this visit.</p> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
+      {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <p className="inline-state">No invoice for this visit.</p> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
     </article>
   )
 }
 
-function InvoiceCard({ invoice, payments, clinicName, patient, canRecordPayment, onPaymentRecorded }: { invoice: Invoice; payments: Payment[]; clinicName: string; patient: Patient; canRecordPayment: boolean; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void }) {
+function InvoiceCard({ invoice, payments, clinicName, patient, canRecordPayment, onPaymentRecorded, onViewReceipt }: { invoice: Invoice; payments: Payment[]; clinicName: string; patient: Patient; canRecordPayment: boolean; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt }) {
   const [receiptPayment, setReceiptPayment] = useState<Payment | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -2017,7 +2135,7 @@ function InvoiceCard({ invoice, payments, clinicName, patient, canRecordPayment,
 
   const canRecordInvoicePayment = canRecordPayment && invoice.balance > 0 && (invoice.status === 'draft' || invoice.status === 'partially_paid')
 
-  return <section className="invoice-card"><div className="invoice-header"><div><span>Invoice</span><strong>{invoice.invoice_number}</strong></div><span className={`invoice-status invoice-${invoice.status}`}>{formatStatus(invoice.status)}</span></div><div className="invoice-totals"><div><span>Total</span><strong>{formatMoney(invoice.total, invoice.currency)}</strong></div><div><span>Paid</span><strong>{formatMoney(invoice.amount_paid, invoice.currency)}</strong></div><div><span>Balance</span><strong>{formatMoney(invoice.balance, invoice.currency)}</strong></div></div>{payments.length > 0 && <div className="payment-list"><span>Payments</span>{payments.map((payment) => <p key={payment.id}>{formatMoney(payment.amount, invoice.currency)} · {formatStatus(payment.payment_method)}{payment.reference ? ` · ${payment.reference}` : ''} · {formatDateTime(payment.payment_date)}</p>)}</div>}{canRecordInvoicePayment && <PaymentForm invoice={invoice} onRecorded={handlePaymentRecorded} />}{receiptPayment && <PaymentConfirmation clinicName={clinicName} patient={patient} invoice={invoice} payment={receiptPayment} />}{error && <p className="form-error" role="alert">{error}</p>}</section>
+  return <section className="invoice-card"><div className="invoice-header"><div><span>Invoice</span><strong>{invoice.invoice_number}</strong></div><span className={`invoice-status invoice-${invoice.status}`}>{formatStatus(invoice.status)}</span></div><div className="invoice-totals"><div><span>Total</span><strong>{formatMoney(invoice.total, invoice.currency)}</strong></div><div><span>Paid</span><strong>{formatMoney(invoice.amount_paid, invoice.currency)}</strong></div><div><span>Balance</span><strong>{formatMoney(invoice.balance, invoice.currency)}</strong></div></div>{payments.length > 0 && <div className="payment-list"><span>Payments</span>{payments.map((payment) => <div className="payment-history-row" key={payment.id}><p>{formatMoney(payment.amount, invoice.currency)} · {formatStatus(payment.payment_method)}{payment.reference ? ` · ${payment.reference}` : ''} · {formatDateTime(payment.payment_date)}</p><button className="button-secondary inline-button" onClick={() => onViewReceipt(patient, invoice, payment)} type="button">View Receipt</button></div>)}</div>}{canRecordInvoicePayment && <PaymentForm invoice={invoice} onRecorded={handlePaymentRecorded} />}{receiptPayment && <PaymentConfirmation clinicName={clinicName} patient={patient} invoice={invoice} payment={receiptPayment} onViewReceipt={() => onViewReceipt(patient, invoice, receiptPayment)} />}{error && <p className="form-error" role="alert">{error}</p>}</section>
 }
 
 function PaymentForm({ invoice, onRecorded }: { invoice: Invoice; onRecorded: (payment: Payment) => void }) {
@@ -2060,8 +2178,152 @@ function PaymentForm({ invoice, onRecorded }: { invoice: Invoice; onRecorded: (p
   return <form className="payment-form" onSubmit={handleSubmit}><input type="number" min="0.01" step="0.01" placeholder="Amount" value={amount} onChange={(event) => setAmount(event.target.value)} required /><select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>{methods.map((paymentMethod) => <option key={paymentMethod} value={paymentMethod}>{formatStatus(paymentMethod)}</option>)}</select><input placeholder="Reference (optional)" value={reference} onChange={(event) => setReference(event.target.value)} /><button type="submit" disabled={submitting}>{submitting ? 'Recording...' : invoice.status === 'partially_paid' ? 'Record Another Payment' : 'Record Payment'}</button>{error && <p className="form-error" role="alert">{error}</p>}</form>
 }
 
-function PaymentConfirmation({ clinicName, patient, invoice, payment }: { clinicName: string; patient: Patient; invoice: Invoice; payment: Payment }) {
-  return <section className="receipt-panel"><div><span>Payment confirmation</span><strong>{clinicName}</strong></div><p>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p><p>Invoice {invoice.invoice_number} · {formatMoney(payment.amount, invoice.currency)} via {formatStatus(payment.payment_method)}</p><p>{formatDateTime(payment.payment_date)} · Paid {formatMoney(invoice.amount_paid, invoice.currency)} · Balance {formatMoney(invoice.balance, invoice.currency)}</p><button className="button-secondary inline-button" onClick={() => window.print()} type="button">Print confirmation</button></section>
+function PaymentConfirmation({ clinicName, patient, invoice, payment, onViewReceipt }: { clinicName: string; patient: Patient; invoice: Invoice; payment: Payment; onViewReceipt: () => void }) {
+  return <section className="receipt-panel"><div><span>Payment recorded</span><strong>{clinicName}</strong></div><p>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p><p>Invoice {invoice.invoice_number} · {formatMoney(payment.amount, invoice.currency)} via {formatStatus(payment.payment_method)}</p><p>{formatDateTime(payment.payment_date)} · Paid {formatMoney(invoice.amount_paid, invoice.currency)} · Current balance {formatMoney(invoice.balance, invoice.currency)}</p><button className="button-secondary inline-button" onClick={onViewReceipt} type="button">View Receipt</button></section>
+}
+
+function PrintableDocumentPreview({ document, onClose }: { document: PrintableDocument; onClose: () => void }) {
+  const title = document.type === 'receipt' ? 'Payment receipt' : 'Clinical visit summary'
+
+  return <div className="print-preview-overlay" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="print-preview-toolbar"><strong>{title}</strong><div><button className="button-secondary" onClick={onClose} type="button">Close</button><button className="primary-action" onClick={() => window.print()} type="button">Print / Reprint</button></div></div>
+    {document.type === 'receipt'
+      ? <PaymentReceiptDocument clinic={document.clinic} patient={document.patient} invoice={document.invoice} payment={document.payment} />
+      : document.type === 'visit'
+        ? <VisitSummaryDocument clinic={document.clinic} patient={document.patient} visit={document.visit} clinicianName={document.clinicianName} prescriptions={document.prescriptions} investigations={document.investigations} />
+        : <ReportPrintDocument clinic={document.clinic} data={document.data} startDate={document.startDate} endDate={document.endDate} generatedAt={document.generatedAt} />}
+  </div>
+}
+
+function safeClinicLogoUrl(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+function PrintableClinicHeader({ clinic }: { clinic: Clinic }) {
+  const logoUrl = safeClinicLogoUrl(clinic.logo_url)
+  const contactDetails = [
+    clinic.address,
+    clinic.phone ? `Phone: ${clinic.phone}` : null,
+    clinic.email,
+    clinic.website,
+  ].filter(Boolean)
+
+  return <header className="print-clinic-header">
+    {logoUrl && <img src={logoUrl} alt={`${clinic.name} logo`} referrerPolicy="no-referrer" />}
+    <div><h2>{clinic.name}</h2>{clinic.tagline && <p>{clinic.tagline}</p>}{contactDetails.length > 0 && <p>{contactDetails.join(' · ')}</p>}</div>
+  </header>
+}
+
+function PaymentReceiptDocument({ clinic, patient, invoice, payment }: { clinic: Clinic; patient: Patient; invoice: Invoice; payment: Payment }) {
+  return <article className="print-document print-receipt">
+    <PrintableClinicHeader clinic={clinic} />
+    <div className="print-document-heading"><div><p>Financial record</p><h1>PAYMENT RECEIPT</h1></div><div><span>Invoice number</span><strong>{invoice.invoice_number}</strong></div></div>
+    <div className="print-metadata-grid">
+      <div><span>Patient</span><strong>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</strong><small>Patient number {patient.patient_number}</small></div>
+      <div><span>Payment date</span><strong>{formatDateTime(payment.payment_date)}</strong></div>
+    </div>
+    <div className="print-financial-table">
+      <div><span>Invoice total</span><strong>{formatMoney(invoice.total, invoice.currency)}</strong></div>
+      <div className="print-payment-total"><span>This payment</span><strong>{formatMoney(payment.amount, invoice.currency)}</strong></div>
+      <div><span>Payment method</span><strong>{formatStatus(payment.payment_method)}</strong></div>
+      {payment.reference && <div><span>Payment reference</span><strong>{payment.reference}</strong></div>}
+    </div>
+    <footer className="print-document-footer">All amounts are in {invoice.currency}.</footer>
+  </article>
+}
+
+function ReportDataTable({ title, headers, rows, emptyMessage }: { title: string; headers: string[]; rows: string[][]; emptyMessage: string }) {
+  return <section className="print-report-section">
+    <h2>{title}</h2>
+    <table className="print-report-table"><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>
+      {rows.length > 0 ? rows.map((row, rowIndex) => <tr key={`${title}-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${title}-${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>) : <tr><td colSpan={headers.length}>{emptyMessage}</td></tr>}
+    </tbody></table>
+  </section>
+}
+
+function ReportPrintDocument({ clinic, data, startDate, endDate, generatedAt }: { clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string }) {
+  const appointmentsByStatus = data.appointments.reduce<Record<string, number>>((counts, appointment) => {
+    counts[appointment.status] = (counts[appointment.status] ?? 0) + 1
+    return counts
+  }, {})
+  const paymentMethodRows = Object.entries(data.paymentsByMethod)
+    .sort(([first], [second]) => first.localeCompare(second))
+    .flatMap(([method, currencies]) => Object.entries(currencies)
+      .sort(([first], [second]) => first.localeCompare(second))
+      .map(([currency, amount]) => [formatStatus(method), currency, formatMoney(amount, currency)]))
+  const paymentTotals = Object.entries(data.paymentsByCurrency)
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([currency, amount]) => formatMoney(amount, currency))
+  const generatedDate = formatDate(getClinicLocalDate(new Date(generatedAt), clinic.timezone))
+
+  return <article className="print-document print-report">
+    <PrintableClinicHeader clinic={clinic} />
+    <div className="print-document-heading"><div><p>Clinic operations</p><h1>CLINIC OPERATIONS REPORT</h1></div></div>
+    <div className="print-metadata-grid">
+      <div><span>Report period</span><strong>{formatDate(startDate)} – {formatDate(endDate)}</strong></div>
+      <div><span>Generated</span><strong>{generatedDate}</strong></div>
+    </div>
+    <section className="print-report-section">
+      <h2>Summary</h2>
+      <div className="print-report-metrics">
+        <div><span>Patient registrations</span><strong>{data.registrations}</strong></div>
+        <div><span>Appointments</span><strong>{data.appointments.length}</strong></div>
+        <div><span>Visits / consultations</span><strong>{data.visits.length}</strong></div>
+        <div><span>Payments received</span><strong>{paymentTotals.length > 0 ? paymentTotals.join(' · ') : 'None'}</strong></div>
+      </div>
+    </section>
+    <ReportDataTable title="Appointment Status" headers={['Status', 'Appointments']} rows={Object.entries(appointmentsByStatus).sort(([first], [second]) => first.localeCompare(second)).map(([status, count]) => [formatStatus(status), String(count)])} emptyMessage="No appointments in this period." />
+    <ReportDataTable title="Payments by Method and Currency" headers={['Method', 'Currency', 'Amount']} rows={paymentMethodRows} emptyMessage="No payments in this period." />
+    <section className="print-report-section">
+      <h2>Current Outstanding Balance</h2>
+      <p className="print-report-note">Current snapshot, not a historical balance for the selected dates.</p>
+      <ReportDataTable title="Outstanding balances" headers={['Currency', 'Balance']} rows={Object.entries(data.outstandingByCurrency).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => [currency, formatMoney(amount, currency)])} emptyMessage="No outstanding balances." />
+    </section>
+    <ReportDataTable title="Doctor Activity" headers={['Doctor', 'Appointments', 'Visits']} rows={data.doctorActivity.map((doctor) => [doctor.label, String(doctor.appointments), String(doctor.visits)])} emptyMessage="No doctor activity in this period." />
+    <footer className="print-document-footer">Report data is limited to the current clinic and existing Reports access.</footer>
+  </article>
+}
+
+function PrintableClinicalField({ label, value }: { label: string; value: string | null | undefined }) {
+  const content = value?.trim()
+  if (!content) return null
+  return <section className="print-clinical-field"><h2>{label}</h2><p>{content}</p></section>
+}
+
+function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescriptions, investigations }: { clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }) {
+  const demographicDetails = [
+    patient.gender,
+    patient.date_of_birth ? `Date of birth: ${formatDate(patient.date_of_birth)}` : null,
+    patient.approximate_age_years !== null && patient.approximate_age_years !== undefined ? `Approx. age: ${patient.approximate_age_years} years` : null,
+  ].filter(Boolean)
+
+  return <article className="print-document print-visit-summary">
+    <PrintableClinicHeader clinic={clinic} />
+    <div className="print-document-heading"><div><p>Clinical record</p><h1>CLINICAL VISIT SUMMARY</h1></div></div>
+    <div className="print-metadata-grid">
+      <div><span>Patient</span><strong>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</strong><small>Patient number {patient.patient_number}</small>{demographicDetails.length > 0 && <small>{demographicDetails.join(' · ')}</small>}</div>
+      <div><span>Visit date</span><strong>{formatDateTime(visit.visit_date)}</strong><small>Treating doctor: {clinicianName}</small></div>
+    </div>
+    <PrintableClinicalField label="Chief complaint" value={visit.chief_complaint} />
+    <PrintableClinicalField label="History of present illness" value={visit.hpi} />
+    <PrintableClinicalField label="Examination" value={visit.examination} />
+    <PrintableClinicalField label="Diagnosis / assessment" value={visit.assessment} />
+    <PrintableClinicalField label="Treatment plan" value={visit.treatment_plan} />
+    <PrintableClinicalField label="Clinical notes" value={visit.clinical_notes} />
+    {(visit.follow_up_date || visit.follow_up_instructions?.trim()) && <section className="print-clinical-field"><h2>Follow-up</h2>{visit.follow_up_date && <p>{formatDate(visit.follow_up_date)}</p>}{visit.follow_up_instructions?.trim() && <p>{visit.follow_up_instructions.trim()}</p>}</section>}
+    {prescriptions.length > 0 && <section className="print-record-section"><h2>Prescriptions</h2>{prescriptions.map((prescription) => {
+      const details = [prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter((detail) => detail?.trim())
+      return <article className="print-record-block" key={prescription.id}><h3>{prescription.medicine}</h3>{details.length > 0 && <p>{details.join(' · ')}</p>}{prescription.quantity !== null && prescription.quantity !== undefined && <p>Quantity: {prescription.quantity}</p>}{prescription.instructions?.trim() && <p>{prescription.instructions.trim()}</p>}</article>
+    })}</section>}
+    {investigations.length > 0 && <section className="print-record-section"><h2>Investigations</h2>{investigations.map((investigation) => <article className="print-record-block" key={investigation.id}><h3>{investigation.investigation_type}</h3>{investigation.status?.trim() && <p>Status: {investigation.status.trim()}</p>}{investigation.result?.trim() && <p>Result: {investigation.result.trim()}</p>}{investigation.result_date && <p>Result date: {formatDate(investigation.result_date)}</p>}{investigation.notes?.trim() && <p>{investigation.notes.trim()}</p>}</article>)}</section>}
+    <footer className="print-document-footer">Confidential patient clinical information.</footer>
+  </article>
 }
 
 function VisitRecordsSummary({ prescriptions, investigations }: { prescriptions: Prescription[]; investigations: Investigation[] }) {
