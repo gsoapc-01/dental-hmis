@@ -1,26 +1,23 @@
 :root {
-  --brand-1: #0ea5e9;
-  --brand-2: #06b6d4;
-  --text: #475569;
-  --text-muted: #64748b;
-  --text-h: #0f172a;
-  --bg: #f8fafc;
+  --brand-1: #247f83;
+  --brand-2: #73b8ad;
+  --text: #506a70;
+  --text-muted: #788c90;
+  --text-h: #15353b;
+  --bg: #f3f7f6;
   --bg-grad:
-    radial-gradient(circle at 20% 10%, rgba(14, 165, 233, 0.08), transparent 40%),
-    radial-gradient(circle at 80% 90%, rgba(6, 182, 212, 0.08), transparent 45%);
-  --status-bg: rgba(255, 255, 255, 0.75);
-  --status-border: rgba(14, 165, 233, 0.18);
-  --status-shadow: 0 10px 30px -12px rgba(14, 165, 233, 0.25);
+    radial-gradient(ellipse at 78% 18%, rgba(177, 218, 210, 0.23), transparent 42%),
+    radial-gradient(ellipse at 12% 86%, rgba(207, 222, 230, 0.22), transparent 42%);
+  --status-bg: rgba(255, 255, 255, 0.82);
+  --status-border: rgba(36, 127, 131, 0.18);
+  --status-shadow: 0 10px 30px -12px rgba(24, 58, 63, 0.18);
   --status-dot: #10b981;
   --status-dot-ring: rgba(16, 185, 129, 0.18);
-
-  --sans:
-    'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
-    Arial, sans-serif;
+  --sans: 'Segoe UI Variable', 'Aptos', 'Segoe UI', system-ui, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  font: 16px/1.55 var(--sans);
-  color-scheme: light dark;
+  font: 15px/1.55 var(--sans);
+  color-scheme: light;
   color: var(--text);
   background-color: var(--bg);
   background-image: var(--bg-grad);
@@ -30,24 +27,9 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #94a3b8;
-    --text-muted: #64748b;
-    --text-h: #f1f5f9;
-    --bg: #0b1120;
-    --bg-grad:
-      radial-gradient(circle at 20% 10%, rgba(14, 165, 233, 0.16), transparent 40%),
-      radial-gradient(circle at 80% 90%, rgba(6, 182, 212, 0.14), transparent 45%);
-    --status-bg: rgba(30, 41, 59, 0.6);
-    --status-border: rgba(14, 165, 233, 0.25);
-    --status-shadow: 0 16px 40px -16px rgba(2, 6, 23, 0.6);
-    --status-dot: #34d399;
-    --status-dot-ring: rgba(52, 211, 153, 0.18);
-  }
-}
-
 #root {
+  position: relative;
+  isolation: isolate;
   min-height: 100svh;
   width: 100%;
   display: flex;
@@ -64,8 +46,10 @@ body {
   padding: 0;
   min-height: 100%;
   width: 100%;
-  background: inherit;
+  background: var(--bg);
 }
+
+body { background-image: var(--bg-grad); }
 
 h1,
 h2,

@@ -2,8 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 
 import './App.css'
+import './SoapSmileWorkstation.css'
+import './SoapSmileThemes.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { supabase } from './lib/supabase'
+import { SoapSmileBillingPatientList, SoapSmileBrand, SoapSmileCompanion, SoapSmileCompanionDock, SoapSmileEmptyState, SoapSmileFeedback, SoapSmileIcon, SoapSmileInvoiceSummary, SoapSmileLoader, SoapSmileLoadingState, SoapSmileLoginEnvironment, SoapSmileOperationsCore, SoapSmileTooth } from './SoapSmilePresentation'
+import { SoapSmileThemePicker, SoapSmileThemeToggle } from './SoapSmileTheme'
+import { useSoapSmileTheme } from './useSoapSmileTheme'
+import type { SoapSmileTheme } from './useSoapSmileTheme'
 import type { Appointment, AppointmentStatus, AuditLog, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
@@ -155,18 +161,30 @@ function LoginScreen({ error, onError }: { error: string | null; onError: (value
   }
 
   return (
-    <main className="auth-page">
-      <section className="auth-panel">
-        <p className="eyebrow">SmartDental HMIS</p>
-        <h1>Welcome back</h1>
-        <p className="panel-copy">Sign in to continue to your clinic workspace.</p>
+    <main className="auth-page auth-page-login">
+      <div className="login-layout">
+        <section className="login-story" aria-label="SoapSmile dental care platform">
+          <SoapSmileLoginEnvironment />
+          <p className="login-story-kicker"><span /> CLINIC OPERATIONS, CONNECTED</p>
+          <h2>Dental care,<br />intelligently connected.</h2>
+          <p>Precision for every encounter. Clarity for your entire care team.</p>
+          <div className="login-story-proof"><SoapSmileIcon name="shield" /><span>Private clinic workspace</span></div>
+          <div className="login-visual-caption">Precision dentistry, thoughtfully connected</div>
+        </section>
+        <section className="auth-panel">
+          <SoapSmileBrand className="login-brand" />
+          <p className="eyebrow">CLINIC PORTAL</p>
+          <h1>Welcome back</h1>
+          <p className="panel-copy">Dental care, intelligently connected.</p>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>
           <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
-          <button type="submit" disabled={submitting}>{submitting ? 'Signing in...' : 'Sign in'}</button>
+          <button className="auth-submit" type="submit" disabled={submitting}><span>{submitting ? 'Signing in...' : 'Sign in'}</span>{submitting ? <SoapSmileLoader size="button" /> : <SoapSmileIcon name="arrow-right" />}</button>
         </form>
-        {error && <p className="form-error" role="alert">{error}</p>}
-      </section>
+        {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+        <div className="login-foot"><SoapSmileIcon name="shield" /><span>Secure access for your care team</span></div>
+        </section>
+      </div>
     </main>
   )
 }
@@ -202,20 +220,21 @@ function ClinicSetupScreen({ user }: { user: User }) {
   return (
     <main className="auth-page">
       <section className="auth-panel">
-        <p className="eyebrow">SmartDental HMIS</p>
+        <SoapSmileBrand className="login-brand" />
         <h1>Set up your clinic</h1>
         <p className="panel-copy">Create the clinic workspace for {user.email ?? 'your account'}.</p>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label>Clinic name<input value={clinicName} onChange={(event) => setClinicName(event.target.value)} autoComplete="organization" maxLength={200} required /></label>
-          <button type="submit" disabled={submitting}>{submitting ? 'Creating clinic...' : 'Create clinic'}</button>
+          <button type="submit" disabled={submitting}>{submitting ? <><SoapSmileLoader size="button" />Creating clinic...</> : 'Create clinic'}</button>
         </form>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
       </section>
     </main>
   )
 }
 
 function ClinicShell({ context }: { context: MembershipContext }) {
+  const { theme, changeTheme } = useSoapSmileTheme()
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [activeModule, setActiveModule] = useState('Dashboard')
   const [patientToOpen, setPatientToOpen] = useState<Patient | null>(null)
@@ -252,35 +271,37 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   }
 
   return <>
-    <main className="shell">
+    <main className="shell" data-theme={theme}>
+      <div className="shell-atmosphere" aria-hidden="true"><span /><span /><span /></div>
       <aside className="sidebar">
-        <div className="brand-lockup"><div className="brand-mark">SD</div><div><p className="eyebrow">SmartDental</p><p className="clinic-name">{clinic.name}</p></div></div>
+        <div className="brand-lockup"><SoapSmileBrand /><div className="clinic-identity"><p className="clinic-label">YOUR CLINIC</p><p className="clinic-name">{clinic.name}</p></div></div>
         <nav aria-label="Clinic modules">
           <p className="nav-label">Workspace</p>
-          <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => navigateToModule('Dashboard')} type="button"><span className="nav-dot" />Dashboard</button>
-          <button className={`nav-item nav-button${activeModule === 'Clinical Visits' ? ' active' : ''}`} onClick={() => navigateToModule('Clinical Visits')} type="button"><span className="nav-dot" />Clinical Visits</button>
-          <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => navigateToModule('Appointments')} type="button"><span className="nav-dot" />Appointments</button>
+          <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => navigateToModule('Dashboard')} type="button"><SoapSmileIcon name="dashboard" />Dashboard</button>
+          <button className={`nav-item nav-button${activeModule === 'Clinical Visits' ? ' active' : ''}`} onClick={() => navigateToModule('Clinical Visits')} type="button"><SoapSmileIcon name="clinical" />Clinical Visits</button>
+          <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => navigateToModule('Appointments')} type="button"><SoapSmileIcon name="appointments" />Appointments</button>
           <p className="nav-label nav-label-spaced">Management</p>
-          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => navigateToModule('Billing')} type="button"><span className="nav-dot" />Billing</button>}
-          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => navigateToModule('Reports')} type="button"><span className="nav-dot" />Reports</button>}
-          {context.membership.role === 'admin' && <button className={`nav-item nav-button${activeModule === 'Staff' ? ' active' : ''}`} onClick={() => navigateToModule('Staff')} type="button"><span className="nav-dot" />Staff</button>}
-          {canManageClinicSettings && <button className={`nav-item nav-button${activeModule === 'Audit / Activity' ? ' active' : ''}`} onClick={() => navigateToModule('Audit / Activity')} type="button"><span className="nav-dot" />Audit / Activity</button>}
-          {canManageClinicSettings && <button className={`nav-item nav-button${activeModule === 'Settings' ? ' active' : ''}`} onClick={() => navigateToModule('Settings')} type="button"><span className="nav-dot" />Settings</button>}
-          {['Prescriptions', 'Investigations'].map((item) => <button className={`nav-item nav-button${activeModule === item ? ' active' : ''}`} key={item} onClick={() => navigateToModule(item)} type="button"><span className="nav-dot" />{item}</button>)}
-          <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => navigateToModule('Patients')} type="button"><span className="nav-dot" />Patients</button>
+          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => navigateToModule('Billing')} type="button"><SoapSmileIcon name="billing" />Billing</button>}
+          {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => navigateToModule('Reports')} type="button"><SoapSmileIcon name="reports" />Reports</button>}
+          {context.membership.role === 'admin' && <button className={`nav-item nav-button${activeModule === 'Staff' ? ' active' : ''}`} onClick={() => navigateToModule('Staff')} type="button"><SoapSmileIcon name="staff" />Staff</button>}
+          {canManageClinicSettings && <button className={`nav-item nav-button${activeModule === 'Audit / Activity' ? ' active' : ''}`} onClick={() => navigateToModule('Audit / Activity')} type="button"><SoapSmileIcon name="activity" />Audit / Activity</button>}
+          {canManageClinicSettings && <button className={`nav-item nav-button${activeModule === 'Settings' ? ' active' : ''}`} onClick={() => navigateToModule('Settings')} type="button"><SoapSmileIcon name="settings" />Settings</button>}
+          {['Prescriptions', 'Investigations'].map((item) => <button className={`nav-item nav-button${activeModule === item ? ' active' : ''}`} key={item} onClick={() => navigateToModule(item)} type="button"><SoapSmileIcon name={item === 'Prescriptions' ? 'prescriptions' : 'investigations'} />{item}</button>)}
+          <button className={`nav-item nav-button${activeModule === 'Patients' ? ' active' : ''}`} onClick={() => navigateToModule('Patients')} type="button"><SoapSmileIcon name="patients" />Patients</button>
         </nav>
-        <div className="user-area"><div className="user-summary"><div className="avatar">{(context.user.email?.[0] ?? 'U').toUpperCase()}</div><div><p>{context.user.email ?? 'Signed-in user'}</p><p className="role">{context.membership.role}</p></div></div><button className="button-secondary" onClick={handleLogout}>Log out</button>{logoutError && <p className="form-error" role="alert">{logoutError}</p>}</div>
+        <div className="user-area"><div className="user-summary"><div className="avatar">{(context.user.email?.[0] ?? 'U').toUpperCase()}</div><div><p>{context.user.email ?? 'Signed-in user'}</p><p className="role">{context.membership.role}</p></div></div><button className="button-secondary logout-button" onClick={handleLogout}><SoapSmileIcon name="logout" />Log out</button>{logoutError && <SoapSmileFeedback tone="error">{logoutError}</SoapSmileFeedback>}</div>
       </aside>
       <section className="shell-content">
-        <header className="topbar"><div><p className="topbar-kicker">Clinic workspace</p><p className="topbar-title">{activeModule}</p></div><div className="topbar-meta"><span className="status-indicator" />Secure session</div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} />}
+        <header className="topbar"><div><p className="topbar-kicker">{clinic.name}</p><p className="topbar-title">{activeModule}</p></div><div className="soap-topbar-actions"><SoapSmileThemeToggle theme={theme} onChange={changeTheme} /><div className="topbar-meta"><span className="status-indicator" /><SoapSmileIcon name="shield" />Secure session</div></div></header>
+        {activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} onViewPatient={openPatientHistory} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} clinicName={clinic.name} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} theme={theme} onThemeChange={changeTheme} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} onOpenBilling={() => navigateToModule('Billing')} onOpenAppointments={() => navigateToModule('Appointments')} />}
+        <SoapSmileCompanionDock />
       </section>
     </main>
     {printableDocument && <PrintableDocumentPreview document={printableDocument} onClose={() => setPrintableDocument(null)} />}
   </>
 }
 
-function ClinicSettingsView({ clinic, onUpdated }: { clinic: Clinic; onUpdated: (clinic: Clinic) => void }) {
+function ClinicSettingsView({ clinic, onUpdated, theme, onThemeChange }: { clinic: Clinic; onUpdated: (clinic: Clinic) => void; theme: SoapSmileTheme; onThemeChange: (theme: SoapSmileTheme) => void }) {
   const [currency, setCurrency] = useState(() => clinicCurrencies.includes(clinic.currency as ClinicCurrency) ? clinic.currency : '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -318,14 +339,15 @@ function ClinicSettingsView({ clinic, onUpdated }: { clinic: Clinic; onUpdated: 
 
   return <div className="clinic-settings-page">
     <div className="page-heading"><div><p className="eyebrow">Clinic management</p><h1>Settings</h1><p className="panel-copy">Manage settings for {clinic.name}.</p></div></div>
+    <SoapSmileThemePicker theme={theme} onChange={onThemeChange} />
     <section className="registration-panel clinic-currency-panel">
       <div className="registration-heading"><p className="eyebrow">Financial settings</p><h2>Operating currency</h2><p className="panel-copy">Currency changes apply to future invoices. Existing invoices keep their recorded currency.</p></div>
       <form className="clinic-currency-form" onSubmit={(event) => void handleSubmit(event)}>
         <label>Clinic currency<select value={currency} onChange={(event) => setCurrency(event.target.value)} required><option value="">Select currency</option>{clinicCurrencies.map((supportedCurrency) => <option key={supportedCurrency} value={supportedCurrency}>{supportedCurrency}</option>)}</select></label>
-        <button className="primary-action" type="submit" disabled={saving || !clinicCurrencies.some((supportedCurrency) => supportedCurrency === currency)}>{saving ? 'Saving...' : 'Save currency'}</button>
+        <button className="primary-action" type="submit" disabled={saving || !clinicCurrencies.some((supportedCurrency) => supportedCurrency === currency)}>{saving ? <><SoapSmileCompanion state="saving" />Saving...</> : 'Save currency'}</button>
       </form>
-      {success && <p className="clinic-settings-success" role="status">{success}</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {success && <SoapSmileFeedback tone="success">{success}</SoapSmileFeedback>}
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
   </div>
 }
@@ -364,7 +386,28 @@ function auditDetailText(metadata: unknown) {
   return details.join(' · ')
 }
 
-function AuditActivityView({ clinicId }: { clinicId: string }) {
+function auditActionSentence(event: AuditLog) {
+  if (event.action === 'currency_changed') return 'changed clinic currency'
+  if (event.action === 'status_changed') return 'changed appointment status'
+  if (event.action === 'consultation_updated') return 'updated a consultation'
+  if (event.action === 'role_changed') return 'changed a staff role'
+  if (event.action === 'activated') return 'activated a staff member'
+  if (event.action === 'deactivated') return 'deactivated a staff member'
+  if (event.action === 'staff_updated') return 'updated a staff member'
+  if (event.action === 'provisioned') return 'added a staff member'
+  if (event.action === 'recorded') return 'recorded a payment'
+  if (event.action === 'created' && event.table_name === 'patients') return 'registered a patient'
+  if (event.action === 'created' && event.table_name === 'appointments') return 'booked an appointment'
+  if (event.action === 'created' && event.table_name === 'visits') return 'created a visit'
+  if (event.action === 'created' && event.table_name === 'prescriptions') return 'added a prescription'
+  if (event.action === 'created' && event.table_name === 'investigations') return 'added an investigation'
+  if (event.action === 'created' && event.table_name === 'dental_chart_entries') return 'added an odontogram entry'
+  if (event.action === 'created' && event.table_name === 'invoices') return 'created an invoice'
+  if (event.action === 'created' && event.table_name === 'clinics') return 'created the clinic'
+  return `${(event.action ?? 'updated').replaceAll('_', ' ')} ${event.table_name?.replaceAll('_', ' ') ?? 'record'}`
+}
+
+function AuditActivityView({ clinicId, clinicName }: { clinicId: string; clinicName: string }) {
   const [events, setEvents] = useState<AuditLog[]>([])
   const [actorNames, setActorNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -436,16 +479,16 @@ function AuditActivityView({ clinicId }: { clinicId: string }) {
         return <option key={kind} value={kind}>{`${tableName.replaceAll('_', ' ')} · ${action.replaceAll('_', ' ')}`}</option>
       })}</select></label>
     </div>
-    {loading && <div className="state-panel" role="status">Loading activity...</div>}
-    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-    {!loading && !error && visibleEvents.length === 0 && <div className="state-panel"><p>No activity matches these filters.</p></div>}
-    {!loading && !error && visibleEvents.length > 0 && <div className="activity-list">{visibleEvents.map((event) => {
+    {loading && <SoapSmileLoadingState>Loading activity...</SoapSmileLoadingState>}
+    {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {!loading && !error && visibleEvents.length === 0 && <SoapSmileEmptyState icon="activity"><p>No activity matches these filters.</p></SoapSmileEmptyState>}
+    {!loading && !error && visibleEvents.length > 0 && <div className="activity-list" tabIndex={0} role="region" aria-label="Activity log">{visibleEvents.map((event) => {
       const details = auditDetailText(event.metadata)
+      const actorName = event.actor_user_id ? actorNames[event.actor_user_id] ?? event.actor_user_id : 'Unknown user'
       return <article className="activity-entry" key={event.id}>
-        <div className="activity-entry-heading"><strong>{(event.action ?? 'activity').replaceAll('_', ' ')}</strong><time dateTime={event.created_at}>{formatDateTime(event.created_at)}</time></div>
-        <p>{(event.table_name ?? 'record').replaceAll('_', ' ')}{event.record_id ? ` · ${event.record_id}` : ''}</p>
-        <p className="activity-actor">{event.actor_user_id ? actorNames[event.actor_user_id] ?? event.actor_user_id : 'Unknown user'}</p>
+        <div className="activity-entry-heading"><strong>{actorName} {auditActionSentence(event)}</strong><time dateTime={event.created_at}>{formatDateTime(event.created_at)}</time></div>
         {details && <p className="activity-details">{details}</p>}
+        <p className="activity-actor">{clinicName} · {(event.table_name ?? 'record').replaceAll('_', ' ')}{event.record_id ? ` · ${event.record_id}` : ''}</p>
       </article>
     })}</div>}
   </div>
@@ -468,7 +511,7 @@ type DashboardData = {
   invoices: Record<string, DashboardInvoice>
 }
 
-function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPatients }: { clinicId: string; clinicName: string; timezone: string; role: UserRole; userId: string; onOpenPatients: () => void }) {
+function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPatients, onOpenBilling, onOpenAppointments }: { clinicId: string; clinicName: string; timezone: string; role: UserRole; userId: string; onOpenPatients: () => void; onOpenBilling: () => void; onOpenAppointments: () => void }) {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -578,42 +621,46 @@ function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPat
   const inProgressAppointments = appointments.filter((appointment) => appointment.status === 'in_progress')
   const completedAppointments = appointments.filter((appointment) => appointment.status === 'completed')
   const currencyTotals = (totals: Record<string, number>) => Object.entries(totals).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <span key={currency}>{formatMoney(amount, currency)}</span>)
+  const flowSummary = [
+    { label: 'Appointments', value: appointments.length, icon: 'appointments' as const },
+    { label: 'Waiting', value: new Set(waitingAppointments.map((appointment) => appointment.patient_id)).size, icon: 'activity' as const },
+    { label: 'In consultation', value: inProgressAppointments.length, icon: 'clinical' as const },
+    { label: 'Completed', value: completedAppointments.length, icon: 'check' as const },
+  ]
   const patientName = (patientId: string) => {
     const patient = data?.patients[patientId]
     return patient ? `${[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · ${patient.patient_number}` : 'Patient details unavailable'
   }
 
+  const recentPayments = (data?.recentPayments ?? []).slice(0, 5)
+
   return (
     <div className="dashboard-page">
       <div className="dashboard-intro"><div><p className="eyebrow">Clinic operations · {today}</p><h1>{clinicName}</h1><p className="panel-copy">Today’s schedule and workload.</p></div><button className="primary-action" onClick={onOpenPatients} type="button">Open patient list</button></div>
-      {error && <div className="state-panel state-error" role="alert">{error}</div>}
-      {loading && <p className="inline-state" role="status">Loading dashboard...</p>}
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+      {loading && <SoapSmileLoadingState>Loading dashboard...</SoapSmileLoadingState>}
       {!loading && !error && data && <>
-        <div className="summary-grid dashboard-metrics">
-          {canViewFinance ? <>
-            <DashboardMetric label="Total Patients" value={String(data.patientCount ?? 0)} />
-            <DashboardMetric label="Today's Appointments" value={String(appointments.length)} />
-            <DashboardMetric label="Waiting Patients" value={String(new Set(waitingAppointments.map((appointment) => appointment.patient_id)).size)} />
-            <DashboardMetric label="Consultations In Progress" value={String(inProgressAppointments.length)} />
-            <DashboardMetric label="Completed Today" value={String(completedAppointments.length)} />
-            <DashboardMetric label="Today's Payments" value={currencyTotals(data.revenueByCurrency)} />
-            <DashboardMetric label="Current Outstanding Balance" value={currencyTotals(data.outstandingByCurrency)} />
-          </> : <>
-            <DashboardMetric label="My Appointments Today" value={String(appointments.length)} />
-            <DashboardMetric label="My Waiting Patients" value={String(new Set(waitingAppointments.map((appointment) => appointment.patient_id)).size)} />
-            <DashboardMetric label="My Consultations In Progress" value={String(inProgressAppointments.length)} />
-            <DashboardMetric label="My Completed Appointments Today" value={String(completedAppointments.length)} />
-          </>}
+        <div className={`dashboard-overview${canViewFinance ? '' : ' dashboard-overview-clinical-only'}`}>
+          <section className="dashboard-flow-panel">
+            <div className="dashboard-overview-heading"><div><p className="eyebrow">{role === 'doctor' ? 'Assigned workload' : 'Clinic flow'}</p><h2>Dental Operations Core</h2></div><span className="dashboard-date-label">{today}</span></div>
+            <SoapSmileOperationsCore metrics={flowSummary} personal={role === 'doctor'} />
+          </section>
+          {canViewFinance && <aside className="dashboard-finance-panel">
+            <div className="dashboard-overview-heading"><div><p className="eyebrow">Clinic snapshot</p><h2>Finance & reach</h2></div><span className="finance-lockup"><SoapSmileIcon name="billing" /></span></div>
+            <div className="dashboard-finance-row"><span>Total patients</span><strong>{data.patientCount ?? 0}</strong></div>
+            <div className="dashboard-finance-row"><span>Payments today</span><strong>{Object.keys(data.revenueByCurrency).length > 0 ? currencyTotals(data.revenueByCurrency) : 'None recorded'}</strong></div>
+            <div className="dashboard-finance-row"><span>Outstanding</span><strong>{Object.keys(data.outstandingByCurrency).length > 0 ? currencyTotals(data.outstandingByCurrency) : 'No open balance'}</strong></div>
+          </aside>}
         </div>
         <div className="dashboard-sections">
-          <DashboardSection title="Today's Schedule">
-            {appointments.length === 0 ? <p className="inline-state">No appointments scheduled today.</p> : <div className="dashboard-row-list">{appointments.map((appointment) => <div className="dashboard-row" key={appointment.id}><span>{formatTime(appointment.start_time)}</span><strong>{patientName(appointment.patient_id)}</strong><span className={`appointment-status status-${appointment.status}`}>{formatStatus(appointment.status)}</span>{appointment.service && <small>{appointment.service}</small>}</div>)}</div>}
+          <DashboardSection title="Today's Schedule" actionLabel="View all" onAction={onOpenAppointments}>
+            {appointments.length === 0 ? <SoapSmileEmptyState><p>No appointments scheduled today.</p></SoapSmileEmptyState> : <div className="dashboard-row-list">{appointments.slice(0, 5).map((appointment) => <div className="dashboard-row" key={appointment.id}><span>{formatTime(appointment.start_time)}</span><strong>{patientName(appointment.patient_id)}</strong><span className={`appointment-status status-${appointment.status}`}>{formatStatus(appointment.status)}</span>{appointment.service && <small>{appointment.service}</small>}</div>)}</div>}
           </DashboardSection>
-          <DashboardSection title="Waiting Queue">
-            {waitingAppointments.length === 0 ? <p className="inline-state">No patients waiting.</p> : <div className="dashboard-row-list">{waitingAppointments.map((appointment) => <div className="dashboard-row" key={appointment.id}><span>{formatTime(appointment.start_time)}</span><strong>{patientName(appointment.patient_id)}</strong>{appointment.service && <small>{appointment.service}</small>}</div>)}</div>}
+          <DashboardSection title="Waiting Queue" actionLabel="View all" onAction={onOpenAppointments}>
+            {waitingAppointments.length === 0 ? <SoapSmileEmptyState><p>No patients waiting.</p></SoapSmileEmptyState> : <div className="dashboard-row-list">{waitingAppointments.slice(0, 5).map((appointment) => <div className="dashboard-row" key={appointment.id}><span>{formatTime(appointment.start_time)}</span><strong>{patientName(appointment.patient_id)}</strong>{appointment.service && <small>{appointment.service}</small>}</div>)}</div>}
           </DashboardSection>
-          {canViewFinance && <DashboardSection title="Recent Payments">
-            {data.recentPayments.length === 0 ? <p className="inline-state">No payments recorded yet.</p> : <div className="dashboard-row-list">{data.recentPayments.map((payment) => {
+          {canViewFinance && <DashboardSection title="Recent Payments" actionLabel="View all" onAction={onOpenBilling}>
+            {recentPayments.length === 0 ? <SoapSmileEmptyState><p>No payments recorded yet.</p></SoapSmileEmptyState> : <div className="dashboard-row-list">{recentPayments.map((payment) => {
               const invoice = data.invoices[payment.invoice_id]
               return <div className="dashboard-row" key={payment.id}><span>{formatDateTimeInTimezone(payment.payment_date, timezone)}</span><strong>{patientName(payment.patient_id)}</strong><span>{invoice ? formatMoney(payment.amount, invoice.currency) : 'Currency unavailable'}</span><small>{invoice?.invoice_number ?? ''} · {formatStatus(payment.payment_method)}</small></div>
             })}</div>}
@@ -625,11 +672,17 @@ function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPat
 }
 
 function DashboardMetric({ label, value }: { label: string; value: React.ReactNode }) {
-  return <section className="summary-card"><p className="card-label">{label}</p><p className="card-value">{value}</p></section>
+  const iconName = label.toLowerCase().includes('patient') ? 'patients'
+    : label.toLowerCase().includes('appointment') ? 'appointments'
+      : label.toLowerCase().includes('waiting') ? 'activity'
+        : label.toLowerCase().includes('consultation') || label.toLowerCase().includes('visit') ? 'clinical'
+          : label.toLowerCase().includes('payment') || label.toLowerCase().includes('balance') ? 'billing'
+            : 'staff'
+  return <section className="summary-card"><div className="metric-heading"><p className="card-label">{label}</p><span className="metric-icon"><SoapSmileIcon name={iconName} /></span></div><p className="card-value">{value}</p></section>
 }
 
-function DashboardSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="dashboard-list-section"><div className="section-heading"><h3>{title}</h3></div>{children}</section>
+function DashboardSection({ title, children, actionLabel, onAction }: { title: string; children: React.ReactNode; actionLabel?: string; onAction?: () => void }) {
+  return <section className="dashboard-list-section"><div className="section-heading"><h3>{title}</h3>{actionLabel && onAction ? <button className="section-link" onClick={onAction} type="button">{actionLabel} <span aria-hidden="true">→</span></button> : null}</div>{children}</section>
 }
 
 const managedStaffRoles: ClinicMembership['role'][] = ['admin', 'doctor', 'receptionist']
@@ -809,19 +862,19 @@ function StaffManagementView({ clinicId, userId }: { clinicId: string; userId: s
         <label>Email<input type="email" autoComplete="email" maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} required /></label>
         <label>Display Name<input autoComplete="name" maxLength={120} value={inviteDisplayName} onChange={(event) => setInviteDisplayName(event.target.value)} required /></label>
         <label>Role<select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as InvitableStaffRole | '')} required><option value="">Select role</option><option value="doctor">Doctor</option><option value="receptionist">Receptionist</option><option value="admin">Admin</option></select></label>
-        <button className="primary-action" type="submit" disabled={inviting}>{inviting ? 'Sending...' : 'Send Invitation'}</button>
+        <button className="primary-action" type="submit" disabled={inviting}>{inviting ? <><SoapSmileLoader size="button" />Sending...</> : 'Send Invitation'}</button>
       </form>
     </section>
-    {success && <div className="state-panel state-success" role="status">{success}</div>}
-    {error && <div className="state-panel state-error" role="alert">{error}</div>}
-    {loading && <p className="inline-state" role="status">Loading staff...</p>}
-    {!loading && !error && staff.length === 0 && <div className="state-panel"><h2>No staff memberships</h2><p>Staff assigned to this clinic will appear here.</p></div>}
-    {!loading && !error && staff.length > 0 && <div className="table-frame staff-table-frame"><table className="patient-table staff-table"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>{staff.map((membership) => {
+    {success && <SoapSmileFeedback tone="success">{success}</SoapSmileFeedback>}
+    {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {loading && <SoapSmileLoadingState>Loading staff...</SoapSmileLoadingState>}
+    {!loading && !error && staff.length === 0 && <SoapSmileEmptyState icon="staff"><h2>No staff memberships</h2><p>Staff assigned to this clinic will appear here.</p></SoapSmileEmptyState>}
+    {!loading && !error && staff.length > 0 && <div className="table-frame staff-table-frame" tabIndex={0} role="region" aria-label="Staff directory"><table className="patient-table staff-table"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>{staff.map((membership) => {
       const name = profiles[membership.user_id]?.trim() || 'Unnamed staff'
       const isCurrentAdmin = membership.user_id === userId
       const selectedRole = roleChanges[membership.user_id] ?? membership.role
       const isSaving = savingUserId === membership.user_id
-      return <tr key={membership.user_id}><td className="staff-name">{name}{isCurrentAdmin && <span className="staff-you">You</span>}</td><td>{formatStatus(membership.role)}</td><td><span className={`staff-status${membership.is_active ? ' active' : ' inactive'}`}>{membership.is_active ? 'Active' : 'Inactive'}</span></td><td>{isCurrentAdmin ? <span className="staff-self-note">Your access is managed separately.</span> : <div className="staff-actions"><label className="staff-role-select"><span className="visually-hidden">Role for {name}</span><select aria-label={`Role for ${name}`} value={selectedRole} onChange={(event) => setRoleChanges((current) => ({ ...current, [membership.user_id]: event.target.value as ClinicMembership['role'] }))} disabled={isSaving}><option value="admin">Admin</option><option value="doctor">Doctor</option><option value="receptionist">Receptionist</option></select></label><button className="button-secondary staff-action" onClick={() => void changeRole(membership)} type="button" disabled={isSaving || selectedRole === membership.role}>{isSaving ? 'Saving...' : 'Save role'}</button><button className="button-secondary staff-action" onClick={() => void setStaffActive(membership)} type="button" disabled={isSaving}>{membership.is_active ? 'Deactivate' : 'Activate'}</button></div>}</td></tr>
+      return <tr key={membership.user_id}><td className="staff-name">{name}{isCurrentAdmin && <span className="staff-you">You</span>}</td><td><span className="staff-role-badge">{formatStatus(membership.role)}</span></td><td><span className={`staff-status${membership.is_active ? ' active' : ' inactive'}`}>{membership.is_active ? 'Active' : 'Inactive'}</span></td><td>{isCurrentAdmin ? <span className="staff-self-note">Your access is managed separately.</span> : <div className="staff-actions"><label className="staff-role-select"><span className="visually-hidden">Role for {name}</span><select aria-label={`Role for ${name}`} value={selectedRole} onChange={(event) => setRoleChanges((current) => ({ ...current, [membership.user_id]: event.target.value as ClinicMembership['role'] }))} disabled={isSaving}><option value="admin">Admin</option><option value="doctor">Doctor</option><option value="receptionist">Receptionist</option></select></label><button className="button-secondary staff-action" onClick={() => void changeRole(membership)} type="button" disabled={isSaving || selectedRole === membership.role}>{isSaving ? <><SoapSmileCompanion state="saving" />Saving...</> : 'Save role'}</button><button className="button-secondary staff-action" onClick={() => void setStaffActive(membership)} type="button" disabled={isSaving}>{membership.is_active ? 'Deactivate' : 'Activate'}</button></div>}</td></tr>
     })}</tbody></table></div>}
   </div>
 }
@@ -836,11 +889,13 @@ type ReportsData = {
   doctorActivity: Array<{ id: string; label: string; appointments: number; visits: number }>
 }
 
-function ClinicalVisitsView({ clinicId, onPrintVisitSummary }: { clinicId: string; onPrintVisitSummary: PrintVisitSummary }) {
+function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOpenPatients }: { clinicId: string; onPrintVisitSummary: PrintVisitSummary; onViewPatient: (patient: Patient) => void; onOpenPatients: () => void }) {
   const [visits, setVisits] = useState<Visit[]>([])
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [selectedPatientId, setSelectedPatientId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -911,23 +966,77 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary }: { clinicId: strin
     return () => { cancelled = true }
   }, [clinicId])
 
+  const patientVisitSummary = new Map<string, { patient: Patient; visitCount: number; latestVisit: string }>()
+  for (const visit of visits) {
+    const patient = recordContext?.patients[visit.patient_id]
+    if (!patient) continue
+    const summary = patientVisitSummary.get(patient.id)
+    if (summary) summary.visitCount += 1
+    else patientVisitSummary.set(patient.id, { patient, visitCount: 1, latestVisit: visit.visit_date })
+  }
+  const clinicalPatients = [...patientVisitSummary.values()].sort((first, second) => second.latestVisit.localeCompare(first.latestVisit))
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+  const matchingPatients = clinicalPatients.filter(({ patient }) =>
+    !normalizedSearch || [patient.patient_number, patient.first_name, patient.middle_name, patient.last_name, patient.phone]
+      .filter(Boolean)
+      .some((value) => value!.toLowerCase().includes(normalizedSearch)),
+  )
+  const selectedPatient = clinicalPatients.find(({ patient }) => patient.id === selectedPatientId)?.patient ?? null
+  const selectedPatientVisits = selectedPatient ? visits.filter((visit) => visit.patient_id === selectedPatient.id) : []
+  const visibleVisits = visits.filter((visit) => {
+    if (selectedPatientId && visit.patient_id !== selectedPatientId) return false
+    if (!normalizedSearch) return true
+    const patient = recordContext?.patients[visit.patient_id]
+    return Boolean(patient && [patient.patient_number, patient.first_name, patient.middle_name, patient.last_name, patient.phone]
+      .filter(Boolean)
+      .some((value) => value!.toLowerCase().includes(normalizedSearch)))
+  })
+  const [visitPage, setVisitPage] = useState(1)
+  const visitPageSize = 5
+  const visitPageCount = Math.max(1, Math.ceil(visibleVisits.length / visitPageSize))
+  const effectiveVisitPage = Math.max(1, Math.min(visitPage, visitPageCount))
+  const paginatedVisits = visibleVisits.slice((effectiveVisitPage - 1) * visitPageSize, effectiveVisitPage * visitPageSize)
+
   return <div className="patients-page">
-    <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Clinical Visits</h1><p className="panel-copy">Review clinic visits and print a visit-specific summary.</p></div></div>
-    {loading && <p className="inline-state" role="status">Loading clinical visits...</p>}
-    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-    {!loading && !error && visits.length === 0 && <div className="state-panel"><h2>No clinical visits recorded</h2></div>}
-    {!loading && !error && visits.length > 0 && <div className="visit-list">{visits.map((visit) => {
-      const patient = recordContext?.patients[visit.patient_id]
-      const clinicianName = recordContext?.doctorNames[visit.doctor_id] ?? 'Clinic doctor'
-      const visitPrescriptions = prescriptions.filter((prescription) => prescription.visit_id === visit.id)
-      const visitInvestigations = investigations.filter((investigation) => investigation.visit_id === visit.id)
-      return <article className="visit-card" key={visit.id}>
-        <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">{clinicianName}</p></div>{patient && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianName, visitPrescriptions, visitInvestigations)} type="button">Print Visit Summary</button>}</div>
-        {patient && <p className="clinical-visit-patient">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p>}
-        <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}</div>
-        <p className="clinical-visit-record-count">{visitPrescriptions.length} {visitPrescriptions.length === 1 ? 'prescription' : 'prescriptions'} · {visitInvestigations.length} {visitInvestigations.length === 1 ? 'investigation' : 'investigations'}</p>
-      </article>
-    })}</div>}
+    <div className="page-heading clinical-page-heading"><div><p className="eyebrow">Clinical records</p><h1>Clinical Visits</h1><p className="panel-copy">Patient history and recent encounters.</p></div><button className="button-secondary clinical-directory-action" onClick={onOpenPatients} type="button"><SoapSmileIcon name="patients" />Patient directory</button></div>
+    {loading && <SoapSmileLoadingState>Loading clinical visits...</SoapSmileLoadingState>}
+    {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {!loading && !error && visits.length === 0 && <SoapSmileEmptyState><h2>No clinical visits recorded</h2></SoapSmileEmptyState>}
+    {!loading && !error && visits.length > 0 && <>
+      <section className="clinical-summary-strip" aria-label="Clinical visit summary">
+        <div className="clinical-summary-identity"><span className="summary-overline">{selectedPatient ? 'SELECTED PATIENT' : 'CLINIC HISTORY'}</span><strong>{selectedPatient ? [selectedPatient.first_name, selectedPatient.middle_name, selectedPatient.last_name].filter(Boolean).join(' ') : 'Clinical overview'}</strong><span>{selectedPatient ? `File ${selectedPatient.patient_number} · ${formatPatientAge(selectedPatient)}` : `${clinicalPatients.length} patients with visit history`}</span></div>
+        <div className="clinical-summary-stat"><span>Visits</span><strong>{selectedPatient ? selectedPatientVisits.length : visits.length}</strong></div>
+        <div className="clinical-summary-stat"><span>Latest encounter</span><strong>{formatDateTime(selectedPatient ? selectedPatientVisits[0]?.visit_date : visits[0]?.visit_date)}</strong></div>
+        {selectedPatient && <button className="button-secondary clinical-open-patient" onClick={() => onViewPatient(selectedPatient)} type="button"><SoapSmileIcon name="patient-file" />Open patient file</button>}
+      </section>
+      <div className="clinical-workspace">
+        <aside className="clinical-patient-panel">
+          <div className="clinical-panel-heading"><div><p className="eyebrow">Patient retrieval</p><h2>Patients with visits</h2></div><span>{matchingPatients.length}</span></div>
+          <PatientSearchField label="Search clinical history" value={searchTerm} onChange={setSearchTerm} placeholder="Name, file number, or phone" />
+          {matchingPatients.length === 0 ? <p className="clinical-search-empty">No patients match this search.</p> : <div className="clinical-patient-results" tabIndex={0} role="region" aria-label="Patients with clinical visits">{matchingPatients.map(({ patient, visitCount }) => <button className={`clinical-patient-result${selectedPatientId === patient.id ? ' selected' : ''}`} key={patient.id} type="button" aria-pressed={selectedPatientId === patient.id} onClick={() => setSelectedPatientId((current) => current === patient.id ? '' : patient.id)}>
+            <span className="clinical-patient-avatar">{patient.first_name[0]}{patient.last_name[0]}</span><span className="clinical-patient-copy"><strong>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</strong><small>{patient.patient_number} · {formatPatientAge(patient)}</small></span><span className="clinical-visit-count">{visitCount}</span>
+          </button>)}</div>}
+        </aside>
+        <section className="clinical-visit-panel" aria-label="Visit history">
+          <div className="clinical-panel-heading"><div><p className="eyebrow">Chronological record</p><h2>{selectedPatient ? 'Patient visits' : 'Recent visits'}</h2></div><span>{visibleVisits.length} {visibleVisits.length === 1 ? 'visit' : 'visits'}</span></div>
+          {visibleVisits.length === 0 ? <div className="clinical-visit-empty"><SoapSmileIcon name="history" /><p>No visits match this patient search.</p></div> : <>
+            <div className="clinical-visit-list" tabIndex={0} role="region" aria-label="Clinical visit list">{paginatedVisits.map((visit) => {
+              const patient = recordContext?.patients[visit.patient_id]
+              const clinicianName = recordContext?.doctorNames[visit.doctor_id] ?? 'Clinic doctor'
+              const visitPrescriptions = prescriptions.filter((prescription) => prescription.visit_id === visit.id)
+              const visitInvestigations = investigations.filter((investigation) => investigation.visit_id === visit.id)
+              const preview = visit.chief_complaint || visit.assessment || visit.treatment_plan
+              return <article className="clinical-visit-row" key={visit.id}>
+                <div className="clinical-visit-date"><SoapSmileIcon name="calendar" /><time dateTime={visit.visit_date}>{formatDateTime(visit.visit_date)}</time></div>
+                <div className="clinical-visit-details"><strong>{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</strong><span>{patient?.patient_number ?? 'File unavailable'} · {clinicianName}</span>{preview && <p>{preview}</p>}<small>{visitPrescriptions.length} {visitPrescriptions.length === 1 ? 'prescription' : 'prescriptions'} · {visitInvestigations.length} {visitInvestigations.length === 1 ? 'investigation' : 'investigations'}</small></div>
+                <div className="clinical-visit-actions">{patient && <button className="button-secondary inline-button" onClick={() => onViewPatient(patient)} type="button"><SoapSmileIcon name="patient-file" />Patient file</button>}{patient && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianName, visitPrescriptions, visitInvestigations)} type="button"><SoapSmileIcon name="print" />Print summary</button>}</div>
+              </article>
+            })}</div>
+            {visitPageCount > 1 && <div className="compact-pagination" aria-label="Clinical visit pagination"><button type="button" disabled={effectiveVisitPage === 1} onClick={() => setVisitPage(Math.max(1, effectiveVisitPage - 1))}>Previous</button><span>{effectiveVisitPage} / {visitPageCount}</span><button type="button" disabled={effectiveVisitPage === visitPageCount} onClick={() => setVisitPage(Math.min(visitPageCount, effectiveVisitPage + 1))}>Next</button></div>}
+          </>}
+        </section>
+      </div>
+    </>}
   </div>
 }
 
@@ -1032,8 +1141,8 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
   return <div className="reports-page">
     <div className="page-heading"><div><p className="eyebrow">Clinic operations</p><h1>Reports</h1><p className="panel-copy">Period activity and current balances.</p></div>{!loading && !error && data && <button className="primary-action" onClick={() => onPrintReport(data, effectiveStart, effectiveEnd)} type="button">Print Report</button>}</div>
     <div className="report-date-range"><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>Through<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label></div>
-    {error && <div className="state-panel state-error" role="alert">{error}</div>}
-    {loading && <p className="inline-state" role="status">Loading reports...</p>}
+    {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {loading && <SoapSmileLoadingState>Loading reports...</SoapSmileLoadingState>}
     {!loading && !error && data && <>
       <div className="summary-grid report-metrics">
         <DashboardMetric label="Patient Registrations" value={String(data.registrations)} />
@@ -1043,17 +1152,17 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
       </div>
       <div className="report-grid">
         <DashboardSection title="Appointment Status">
-          {Object.keys(appointmentsByStatus).length === 0 ? <p className="inline-state">No appointments in this period.</p> : <div className="report-value-list">{Object.entries(appointmentsByStatus).map(([status, count]) => <div key={status}><span>{formatStatus(status)}</span><strong>{count}</strong></div>)}</div>}
+          {Object.keys(appointmentsByStatus).length === 0 ? <SoapSmileEmptyState icon="reports"><p>No appointments in this period.</p></SoapSmileEmptyState> : <div className="report-value-list">{Object.entries(appointmentsByStatus).map(([status, count]) => <div key={status}><span>{formatStatus(status)}</span><strong>{count}</strong></div>)}</div>}
         </DashboardSection>
         <DashboardSection title="Payments by Method and Currency">
-          {Object.keys(data.paymentsByMethod).length === 0 ? <p className="inline-state">No payments in this period.</p> : <div className="report-value-list">{Object.entries(data.paymentsByMethod).sort(([first], [second]) => first.localeCompare(second)).map(([method, currencies]) => <div key={method}><span>{formatStatus(method)}</span><strong>{totals(currencies)}</strong></div>)}</div>}
+          {Object.keys(data.paymentsByMethod).length === 0 ? <SoapSmileEmptyState icon="reports"><p>No payments in this period.</p></SoapSmileEmptyState> : <div className="report-value-list">{Object.entries(data.paymentsByMethod).sort(([first], [second]) => first.localeCompare(second)).map(([method, currencies]) => <div key={method}><span>{formatStatus(method)}</span><strong>{totals(currencies)}</strong></div>)}</div>}
         </DashboardSection>
         <DashboardSection title="Current Outstanding Balance">
           <p className="report-caption">Current snapshot, not a historical balance for the selected dates.</p>
-          {Object.keys(data.outstandingByCurrency).length === 0 ? <p className="inline-state">No outstanding balances.</p> : <div className="report-value-list">{Object.entries(data.outstandingByCurrency).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <div key={currency}><span>{currency}</span><strong>{formatMoney(amount, currency)}</strong></div>)}</div>}
+          {Object.keys(data.outstandingByCurrency).length === 0 ? <SoapSmileEmptyState icon="reports"><p>No outstanding balances.</p></SoapSmileEmptyState> : <div className="report-value-list">{Object.entries(data.outstandingByCurrency).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <div key={currency}><span>{currency}</span><strong>{formatMoney(amount, currency)}</strong></div>)}</div>}
         </DashboardSection>
         <DashboardSection title="Doctor Activity">
-          {data.doctorActivity.length === 0 ? <p className="inline-state">No doctor activity in this period.</p> : <div className="report-value-list">{data.doctorActivity.map((doctor) => <div key={doctor.id}><span>{doctor.label}</span><strong>{doctor.appointments} appointments · {doctor.visits} visits</strong></div>)}</div>}
+          {data.doctorActivity.length === 0 ? <SoapSmileEmptyState icon="reports"><p>No doctor activity in this period.</p></SoapSmileEmptyState> : <div className="report-value-list">{data.doctorActivity.map((doctor) => <div key={doctor.id}><span>{doctor.label}</span><strong>{doctor.appointments} appointments · {doctor.visits} visits</strong></div>)}</div>}
         </DashboardSection>
       </div>
     </>}
@@ -1228,6 +1337,13 @@ function RecordPatientContext({ patient, visitDate, doctorName, onViewPatient }:
   </div>
 }
 
+function PatientSearchField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+  return <div className="search-field soap-search-field">
+    <span>{label}</span>
+    <div className="search-input-wrap"><SoapSmileIcon name="search" /><input aria-label={label} type="search" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />{value && <button className="search-clear" type="button" aria-label={`Clear ${label.toLowerCase()}`} title="Clear search" onClick={() => onChange('')}><SoapSmileIcon name="close" /></button>}</div>
+  </div>
+}
+
 function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
@@ -1280,16 +1396,16 @@ function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onVi
 
   return <div className="patients-page">
     <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Prescriptions</h1><p className="panel-copy">Prescriptions recorded during patient visits.</p></div></div>
-    {loading && <p className="inline-state" role="status">Loading prescriptions...</p>}
-    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-    {!loading && !error && prescriptions.length === 0 && <div className="state-panel"><h2>No prescriptions recorded</h2></div>}
+    {loading && <SoapSmileLoadingState>Loading prescriptions...</SoapSmileLoadingState>}
+    {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {!loading && !error && prescriptions.length === 0 && <SoapSmileEmptyState icon="prescriptions"><h2>No prescriptions recorded</h2></SoapSmileEmptyState>}
     {!loading && !error && prescriptions.length > 0 && <div className="clinical-record-list">{prescriptions.map((prescription) => {
       const patient = recordContext?.patients[prescription.patient_id]
       const details = [prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean)
       const doctorName = recordContext?.doctorNames[prescription.prescribing_doctor_id] ?? 'Clinic doctor'
       return <article className="clinical-record" key={prescription.id}>
         <RecordPatientContext patient={patient} visitDate={recordContext?.visitDates[prescription.visit_id]} doctorName={`Prescribed by ${doctorName}`} onViewPatient={onViewPatient} />
-        <strong>{prescription.medicine}</strong>
+        <strong className="record-primary"><SoapSmileIcon name="prescriptions" />{prescription.medicine}</strong>
         {details.length > 0 && <p>{details.join(' · ')}</p>}
         {prescription.quantity !== null && prescription.quantity !== undefined && <p>Quantity: {prescription.quantity}</p>}
         {prescription.instructions && <p>{prescription.instructions}</p>}
@@ -1350,17 +1466,17 @@ function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onV
 
   return <div className="patients-page">
     <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Investigations</h1><p className="panel-copy">Investigations requested during patient visits.</p></div></div>
-    {loading && <p className="inline-state" role="status">Loading investigations...</p>}
-    {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-    {!loading && !error && investigations.length === 0 && <div className="state-panel"><h2>No investigations recorded</h2></div>}
+    {loading && <SoapSmileLoadingState>Loading investigations...</SoapSmileLoadingState>}
+    {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {!loading && !error && investigations.length === 0 && <SoapSmileEmptyState icon="investigations"><h2>No investigations recorded</h2></SoapSmileEmptyState>}
     {!loading && !error && investigations.length > 0 && <div className="clinical-record-list">{investigations.map((investigation) => {
       const patient = recordContext?.patients[investigation.patient_id]
       const doctorName = recordContext?.doctorNames[investigation.requesting_doctor_id] ?? 'Clinic doctor'
       const resultDate = investigation.result_date ? formatDate(investigation.result_date) : null
       return <article className="clinical-record" key={investigation.id}>
         <RecordPatientContext patient={patient} visitDate={recordContext?.visitDates[investigation.visit_id]} doctorName={`Requested by ${doctorName}`} onViewPatient={onViewPatient} />
-        <strong>{investigation.investigation_type}</strong>
-        {(investigation.status || investigation.result || resultDate) && <p>{[investigation.status, investigation.result, resultDate].filter(Boolean).join(' · ')}</p>}
+        <strong className="record-primary"><SoapSmileIcon name="investigations" />{investigation.investigation_type}</strong>
+        {investigation.status && <span className="investigation-status">{investigation.status}</span>}{investigation.result && <p><b>Result:</b> {investigation.result}</p>}{resultDate && <p className="record-result-date">Result date: {resultDate}</p>}
         {investigation.notes && <p>{investigation.notes}</p>}
       </article>
     })}</div>}
@@ -1369,7 +1485,7 @@ function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onV
 
 type AppointmentView = 'upcoming' | 'today' | 'waiting'
 
-function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId: string; role: UserRole }) {
+function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId: string; userId: string; role: UserRole; onOpenPatients: () => void }) {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [waitingAppointments, setWaitingAppointments] = useState<Appointment[]>([])
   const [patients, setPatients] = useState<Record<string, PatientAppointmentSummary>>({})
@@ -1487,15 +1603,15 @@ function AppointmentsView({ clinicId, userId, role }: { clinicId: string; userId
 
   return (
     <div className="appointments-page">
-      <div className="page-heading"><div><p className="eyebrow">Care coordination</p><h1>Appointments</h1><p className="panel-copy">Schedule and manage today\'s patient arrivals.</p></div><button className="button-secondary refresh-button" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button></div>
-      <div className="appointment-tabs" role="tablist" aria-label="Appointment views"><button className={activeView === 'upcoming' ? 'active' : ''} onClick={() => setActiveView('upcoming')} role="tab" type="button">Upcoming <span>{appointments.length}</span></button><button className={activeView === 'today' ? 'active' : ''} onClick={() => setActiveView('today')} role="tab" type="button">Today <span>{todayAppointments.length}</span></button><button className={activeView === 'waiting' ? 'active' : ''} onClick={() => setActiveView('waiting')} role="tab" type="button">Waiting queue <span>{visibleWaitingAppointments.length}</span></button></div>
-      {loading && <div className="state-panel" role="status">Loading upcoming appointments...</div>}
-      {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-      {!loading && !error && transitionError && <div className="state-panel state-error" role="alert">{transitionError}</div>}
+      <div className="page-heading"><div><p className="eyebrow">Care coordination</p><h1>Appointments</h1><p className="panel-copy">Schedule and manage today\'s patient arrivals.</p></div><div className="appointments-heading-actions"><button className="button-secondary refresh-button" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button><button className="primary-action" onClick={onOpenPatients} type="button"><SoapSmileIcon name="patients" />Find patient</button></div></div>
+      <div className="appointment-tabs" role="tablist" aria-label="Appointment views"><button className={activeView === 'upcoming' ? 'active' : ''} onClick={() => setActiveView('upcoming')} role="tab" aria-selected={activeView === 'upcoming'} type="button">Upcoming <span>{appointments.length}</span></button><button className={activeView === 'today' ? 'active' : ''} onClick={() => setActiveView('today')} role="tab" aria-selected={activeView === 'today'} type="button">Today <span>{todayAppointments.length}</span></button><button className={activeView === 'waiting' ? 'active' : ''} onClick={() => setActiveView('waiting')} role="tab" aria-selected={activeView === 'waiting'} type="button">Waiting queue <span>{visibleWaitingAppointments.length}</span></button></div>
+      {loading && <SoapSmileLoadingState>Loading upcoming appointments...</SoapSmileLoadingState>}
+      {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+      {!loading && !error && transitionError && <SoapSmileFeedback tone="error">{transitionError}</SoapSmileFeedback>}
       {activeConsultation && <><ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} /><DentalChart clinicId={clinicId} visit={activeConsultation.visit} userId={userId} canCreate defaultOpen /></>}
-      {!loading && !error && !hasAppointments && <div className="state-panel"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></div>}
-      {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <div className="state-panel"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></div>}
-      {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} transitioning={transitioningId === appointment.id} />)}</div>}
+      {!loading && !error && !hasAppointments && <SoapSmileEmptyState icon="appointments"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></SoapSmileEmptyState>}
+      {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <SoapSmileEmptyState icon="appointments"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></SoapSmileEmptyState>}
+      {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list" tabIndex={0} role="region" aria-label="Appointment list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} transitioning={transitioningId === appointment.id} />)}</div>}
     </div>
   )
 }
@@ -1599,7 +1715,7 @@ function ConsultationPanel({ appointment, patient, visit, clinicianLabel, onComp
     onCompleted()
   }
 
-  return <section className="registration-panel consultation-panel" aria-labelledby="consultation-heading"><div className="registration-heading"><p className="eyebrow">Active consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="panel-copy">File {patient.patient_number} · {appointment.service || 'Appointment consultation'} · Working as {clinicianLabel}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Leave consultation</button><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? 'Saving...' : 'Save draft'}</button><button type="button" disabled={saving || completing} onClick={() => { void completeConsultation() }}>{completing ? 'Completing...' : 'Complete Consultation'}</button></div></form><VisitClinicalRecordsPanel clinicId={visit.clinic_id} patientId={visit.patient_id} visitId={visit.id} doctorId={visit.doctor_id} disabled={saving || completing} />{message && <p className="inline-state" role="status">{message}</p>}{error && <p className="form-error" role="alert">{error}</p>}</section>
+  return <section className="registration-panel consultation-panel" aria-labelledby="consultation-heading"><div className="registration-heading"><p className="eyebrow">Active consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="panel-copy">File {patient.patient_number} · {appointment.service || 'Appointment consultation'} · Working as {clinicianLabel}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Leave consultation</button><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? <><SoapSmileCompanion state="saving" />Saving...</> : 'Save draft'}</button><button type="button" disabled={saving || completing} onClick={() => { void completeConsultation() }}>{completing ? <><SoapSmileLoader size="button" />Completing...</> : 'Complete Consultation'}</button></div></form><VisitClinicalRecordsPanel clinicId={visit.clinic_id} patientId={visit.patient_id} visitId={visit.id} doctorId={visit.doctor_id} disabled={saving || completing} />{message && <SoapSmileFeedback tone="success">{message}</SoapSmileFeedback>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
 type PrescriptionFormValues = {
@@ -1713,7 +1829,7 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
     setInvestigationForm(initialInvestigationForm)
   }
 
-  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>Prescriptions and investigations</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <p className="inline-state" role="status">Loading visit records...</p>}{!loading && <div className="clinical-records-grid"><section><h4>Prescriptions</h4>{prescriptions.length === 0 ? <p className="inline-state">No prescriptions recorded.</p> : <div className="clinical-record-list">{prescriptions.map((prescription) => <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article>)}</div>}<form className="record-form" onSubmit={addPrescription}><input placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled} required /><input placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled} /><input placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled} /><input placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled} /><input placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled} /><input placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled} /><input type="number" min="0" step="any" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled} /><input placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled} /><button type="submit" disabled={disabled || saving}>{saving ? 'Adding...' : 'Add prescription'}</button></form></section><section><h4>Investigations</h4>{investigations.length === 0 ? <p className="inline-state">No investigations requested.</p> : <div className="clinical-record-list">{investigations.map((investigation) => <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article>)}</div>}<form className="record-form" onSubmit={addInvestigation}><input placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled} required /><input placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled} /><textarea placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? 'Adding...' : 'Add investigation'}</button></form></section></div>}{error && <p className="form-error" role="alert">{error}</p>}</section>
+  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>Prescriptions and investigations</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <SoapSmileLoadingState>Loading visit records...</SoapSmileLoadingState>}{!loading && <div className="clinical-records-grid"><section><h4>Prescriptions</h4>{prescriptions.length === 0 ? <SoapSmileEmptyState><p>No prescriptions recorded.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{prescriptions.map((prescription) => <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article>)}</div>}<form className="record-form" onSubmit={addPrescription}><input aria-label="Medicine" placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled} required /><input aria-label="Strength" placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled} /><input aria-label="Dose" placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled} /><input aria-label="Route" placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled} /><input aria-label="Frequency" placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled} /><input aria-label="Duration" placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled} /><input type="number" min="0" step="any" aria-label="Quantity" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled} /><input aria-label="Instructions" placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add prescription'}</button></form></section><section><h4>Investigations</h4>{investigations.length === 0 ? <SoapSmileEmptyState><p>No investigations requested.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{investigations.map((investigation) => <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article>)}</div>}<form className="record-form" onSubmit={addInvestigation}><input aria-label="Investigation type" placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled} required /><input aria-label="Status" placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled} /><textarea aria-label="Notes" placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add investigation'}</button></form></section></div>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
 type PatientFormValues = {
@@ -1807,15 +1923,16 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
         <div><p className="eyebrow">Patient management</p><h1>{selectedPatient ? 'Patient details' : 'Patients'}</h1><p className="panel-copy">{selectedPatient ? 'Review and update demographic information.' : 'Register and review the people receiving care at your clinic.'}</p></div>
         {!showRegistration && <button className="primary-action" onClick={() => { setSuccess(null); setError(null); setShowRegistration(true) }} type="button">Register New Patient</button>}
       </div>
-      {success && <div className="state-panel state-success" role="status">{success}</div>}
+      {success && <SoapSmileFeedback tone="success">{success}</SoapSmileFeedback>}
       {showRegistration && <PatientRegistrationForm clinicId={clinicId} onCancel={() => setShowRegistration(false)} onRegistered={handleRegistered} />}
       {selectedPatient && <PatientProfile clinicId={clinicId} clinicName={clinicName} clinicTimezone={clinicTimezone} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => setSelectedPatient(null)} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />}
       {!selectedPatient && <>
-        <div className="patient-toolbar"><label className="search-field"><span>Search patients</span><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="File number, name, or phone" type="search" /></label><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
-        {loading && <div className="state-panel" role="status">Loading patients...</div>}
-        {!loading && error && <div className="state-panel state-error" role="alert">{error}</div>}
-        {!loading && !error && patients.length === 0 && <div className="state-panel"><h2>No patients yet</h2><p>Registered patients will appear here.</p></div>}
-        {!loading && !error && patients.length > 0 && visiblePatients.length === 0 && <div className="state-panel"><h2>No matching patients</h2><p>Try a different file number, name, or phone number.</p></div>}
+        {!showRegistration && <div className="patient-directory-summary"><div><span className="summary-overline">CLINIC ROSTER</span><strong>{patients.length}</strong><span>patient files</span></div><p>{loading ? 'Loading clinic records...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'match' : 'matches'}${searchTerm.trim() ? ' for this search' : ' in the directory'}`}</p></div>}
+        <div className="patient-toolbar"><PatientSearchField label="Search patients" value={searchTerm} onChange={setSearchTerm} placeholder="File number, name, or phone" /><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
+        {loading && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}
+        {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+        {!loading && !error && patients.length === 0 && <SoapSmileEmptyState icon="patients"><h2>No patients yet</h2><p>Registered patients will appear here.</p></SoapSmileEmptyState>}
+        {!loading && !error && patients.length > 0 && visiblePatients.length === 0 && <SoapSmileEmptyState icon="patients"><h2>No matching patients</h2><p>Try a different file number, name, or phone number.</p></SoapSmileEmptyState>}
         {!loading && !error && visiblePatients.length > 0 && <PatientTable patients={visiblePatients} onSelect={setSelectedPatient} />}
       </>}
     </div>
@@ -1916,6 +2033,11 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
   const visiblePatients = patients.filter((patient) => [patient.patient_number, patient.first_name, patient.middle_name, patient.last_name, patient.phone]
     .filter(Boolean)
     .some((value) => value!.toLowerCase().includes(normalizedSearch)))
+  const [billingPage, setBillingPage] = useState(1)
+  const billingPageSize = 8
+  const billingPageCount = Math.max(1, Math.ceil(visiblePatients.length / billingPageSize))
+  const effectiveBillingPage = Math.max(1, Math.min(billingPage, billingPageCount))
+  const paginatedPatients = visiblePatients.slice((effectiveBillingPage - 1) * billingPageSize, effectiveBillingPage * billingPageSize)
   const invoiceableVisits = visits.filter((visit) => {
     const hasInvoice = invoices.some((invoice) => invoice.visit_id === visit.id)
     return hasInvoice || !visit.appointment_id || appointmentStatuses[visit.appointment_id] === 'completed'
@@ -1934,24 +2056,33 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
   }
 
   return (
-    <div className="patients-page">
+    <div className="patients-page soap-billing-page">
       <div className="page-heading"><div><p className="eyebrow">Management</p><h1>Billing</h1><p className="panel-copy">Clinic currency: {currency}. Find a patient to review visits, invoices, and payments.</p></div></div>
-      {!selectedPatient ? <>
-        <div className="patient-toolbar"><label className="search-field"><span>Search patients</span><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="File number, name, or phone" type="search" /></label><p className="result-count">{loadingPatients ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
-        {loadingPatients && <div className="state-panel" role="status">Loading patients...</div>}
-        {!loadingPatients && error && <div className="state-panel state-error" role="alert">{error}</div>}
-        {!loadingPatients && !error && patients.length === 0 && <div className="state-panel"><h2>No patients yet</h2><p>Registered patients will appear here.</p></div>}
-        {!loadingPatients && !error && patients.length > 0 && visiblePatients.length === 0 && <div className="state-panel"><h2>No matching patients</h2><p>Try a different file number, name, or phone number.</p></div>}
-        {!loadingPatients && !error && visiblePatients.length > 0 && <PatientTable patients={visiblePatients} onSelect={(patient) => { setSelectedPatient(patient); setError(null); setVisits([]); setInvoices([]); setPayments({}); setBillingVisit(null) }} />}
-      </> : <>
+      <div className="soap-billing-workspace">
+        <aside className="soap-billing-finder"><div className="soap-workspace-panel-heading"><div><p className="eyebrow">Patient index</p><h2>Patient finder</h2></div><SoapSmileIcon name="search" /></div>
+        <div className="patient-toolbar"><PatientSearchField label="Search patients" value={searchTerm} onChange={setSearchTerm} placeholder="File number, name, or phone" /><p className="result-count">{loadingPatients ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
+        {loadingPatients && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}
+        {!selectedPatient && !loadingPatients && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+        {!loadingPatients && !error && patients.length === 0 && <SoapSmileEmptyState icon="billing"><h2>No patients yet</h2><p>Registered patients will appear here.</p></SoapSmileEmptyState>}
+        {!loadingPatients && !error && patients.length > 0 && visiblePatients.length === 0 && <SoapSmileEmptyState icon="billing"><h2>No matching patients</h2><p>Try a different file number, name, or phone number.</p></SoapSmileEmptyState>}
+        {!loadingPatients && !error && visiblePatients.length > 0 && <>
+          <SoapSmileBillingPatientList selectedId={selectedPatient?.id} patients={paginatedPatients} onSelect={(patient) => { setSelectedPatient(patient); setError(null); setVisits([]); setInvoices([]); setPayments({}); setBillingVisit(null) }} />
+          {billingPageCount > 1 && <div className="compact-pagination" aria-label="Billing patient pagination"><button type="button" disabled={effectiveBillingPage === 1} onClick={() => setBillingPage(Math.max(1, effectiveBillingPage - 1))}>Previous</button><span>{effectiveBillingPage} / {billingPageCount}</span><button type="button" disabled={effectiveBillingPage === billingPageCount} onClick={() => setBillingPage(Math.min(billingPageCount, effectiveBillingPage + 1))}>Next</button></div>}
+        </>}
+        </aside>
+        <section className="soap-billing-detail" aria-label="Patient financial workspace">
+          {!selectedPatient ? <div className="soap-financial-welcome"><span className="soap-financial-welcome-icon"><SoapSmileIcon name="billing" /></span><p className="eyebrow">Patient financial workspace</p><h2>Every payment. A clearer picture.</h2><p>Select a patient to review recorded invoices, payments and balances.</p><SoapSmileEmptyState icon="patients"><p>Choose a patient from the finder.</p></SoapSmileEmptyState></div> : <>
         <button className="back-button" onClick={() => { setSelectedPatient(null); setError(null) }} type="button">Back to patients</button>
         <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[selectedPatient.first_name, selectedPatient.middle_name, selectedPatient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{selectedPatient.patient_number}</strong></p></div></div>
-        {loadingBilling && <p className="inline-state" role="status">Loading billing history...</p>}
-        {!loadingBilling && error && <div className="state-panel state-error" role="alert">{error}</div>}
-        {!loadingBilling && !error && invoiceableVisits.length === 0 && invoices.length === 0 && <div className="state-panel"><h2>No invoiceable visits</h2><p>Completed appointment visits and manual visits will appear here.</p></div>}
+        {loadingBilling && <SoapSmileLoadingState>Loading billing history...</SoapSmileLoadingState>}
+        {!loadingBilling && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+        {!loadingBilling && !error && invoices.length > 0 && <SoapSmileInvoiceSummary invoice={invoices[0]} formatAmount={formatMoney} />}
+        {!loadingBilling && !error && invoiceableVisits.length === 0 && invoices.length === 0 && <SoapSmileEmptyState icon="billing"><h2>No invoiceable visits</h2><p>Completed appointment visits and manual visits will appear here.</p></SoapSmileEmptyState>}
         {!loadingBilling && !error && invoiceableVisits.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Billing</p><h3>Invoiceable visits</h3></div><span className="history-count">{invoiceableVisits.length} {invoiceableVisits.length === 1 ? 'visit' : 'visits'}</span></div><div className="visit-list">{invoiceableVisits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel="Clinic clinician" prescriptions={[]} investigations={[]} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={selectedPatient} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} />)}</div></section>}
         {!loadingBilling && !error && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={selectedPatient} canRecordPayment onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} />)}</div></section>}
-      </>}
+          </>}
+        </section>
+      </div>
     </div>
   )
 }
@@ -2038,19 +2169,19 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
         <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>
         <label>Email<input type="email" value={form.email} onChange={(event) => updateField('email', event.target.value)} autoComplete="email" /></label>
         <label className="full-width">Address<input value={form.address} onChange={(event) => updateField('address', event.target.value)} autoComplete="street-address" /></label>
-        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Saving patient...' : 'Save patient'}</button></div>
+        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving patient...</> : 'Save patient'}</button></div>
       </form>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
   )
 }
 
 function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (patient: Patient) => void }) {
   return (
-    <div className="table-frame">
+    <div className="table-frame" tabIndex={0} role="region" aria-label="Patient directory">
       <table className="patient-table">
-        <thead><tr><th>Patient file</th><th>Full name</th><th>Gender</th><th>Date of birth</th><th>Phone</th><th>Registered</th></tr></thead>
-        <tbody>{patients.map((patient) => <tr className="patient-row" key={patient.id} onClick={() => onSelect(patient)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(patient) }} role="button" tabIndex={0}><td><span className="file-number">{patient.patient_number}</span></td><td className="patient-name-cell">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</td><td>{patient.gender || '-'}</td><td>{formatDate(patient.date_of_birth)}</td><td>{patient.phone || '-'}</td><td>{formatDate(patient.created_at)}</td></tr>)}</tbody>
+        <thead><tr><th>Patient</th><th>Age</th><th>Gender</th><th>Phone</th><th>Registered</th></tr></thead>
+        <tbody>{patients.map((patient) => <tr className="patient-row" key={patient.id} onClick={() => onSelect(patient)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelect(patient) }} role="button" tabIndex={0} aria-label={`Open ${patient.first_name} ${patient.last_name}, file ${patient.patient_number}`}><td className="patient-identity-cell"><span className="patient-name-cell">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</span><span className="file-number">{patient.patient_number}</span></td><td>{formatPatientAge(patient)}</td><td>{patient.gender || '-'}</td><td>{patient.phone || '-'}</td><td>{formatDate(patient.created_at)}</td></tr>)}</tbody>
       </table>
     </div>
   )
@@ -2157,13 +2288,13 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
         <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button><button className="button-secondary profile-secondary-action" onClick={() => { setAppointmentSuccess(null); setShowAppointmentForm(true) }} type="button">Book Appointment</button><button className="primary-action" disabled={role === 'receptionist' || role === 'patient'} onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }} type="button">New Visit</button></div></div>
         <div className="profile-grid"><section className="profile-card"><p className="card-label">Personal details</p><dl className="detail-list"><DetailItem label="Full name" value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} /><DetailItem label="Gender" value={patient.gender} /><DetailItem label="Date of birth" value={formatDate(patient.date_of_birth)} /><DetailItem label="Age" value={formatPatientAge(patient)} /><DetailItem label="Registered" value={formatDate(patient.created_at)} /></dl></section><section className="profile-card"><p className="card-label">Contact details</p><dl className="detail-list"><DetailItem label="Phone" value={patient.phone} /><DetailItem label="Email" value={patient.email} /><DetailItem label="Address" value={patient.address} /></dl></section></div>
         {showAppointmentForm && <AppointmentForm clinicId={clinicId} timezone={clinicTimezone} userId={userId} patient={patient} onCancel={() => setShowAppointmentForm(false)} onCreated={(appointment) => { setShowAppointmentForm(false); setAppointmentSuccess(`Appointment booked for ${formatDate(appointment.appointment_date)} at ${formatTime(appointment.start_time)}.`) }} />}
-        {appointmentSuccess && <div className="state-panel state-success" role="status">{appointmentSuccess}</div>}
+        {appointmentSuccess && <SoapSmileFeedback tone="success">{appointmentSuccess}</SoapSmileFeedback>}
         {role === 'receptionist' && <p className="role-note">A doctor or clinic administrator must be signed in to create a clinical visit.</p>}
         {showVisitForm && <NewVisitForm clinicId={clinicId} patientId={patient.id} doctorId={userId} clinicianLabel={clinicianLabel} onCancel={() => setShowVisitForm(false)} onCreated={handleVisitCreated} />}
-        {visitSuccess && <div className="state-panel state-success" role="status">{visitSuccess}</div>}
+        {visitSuccess && <SoapSmileFeedback tone="success">{visitSuccess}</SoapSmileFeedback>}
         <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Visit history</p><h3>Clinical encounters</h3></div><span className="history-count">{visits.length} {visits.length === 1 ? 'visit' : 'visits'}</span></div>
-          {visitLoading && <p className="inline-state" role="status">Loading visit history...</p>}
-          {!visitLoading && visitError && <p className="form-error" role="alert">{visitError}</p>}
+          {visitLoading && <SoapSmileLoadingState>Loading visit history...</SoapSmileLoadingState>}
+          {!visitLoading && visitError && <SoapSmileFeedback tone="error">{visitError}</SoapSmileFeedback>}
           {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
           {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={doctorNames[visit.doctor_id] ?? (visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician')} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />)}</div>}
         </section>
@@ -2238,9 +2369,9 @@ function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel,
         <label>Assessment<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label>
         <label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label>
         <label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label>
-        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Saving visit...' : 'Save visit'}</button></div>
+        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving visit...</> : 'Save visit'}</button></div>
       </form>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
   )
 }
@@ -2277,7 +2408,7 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
     onCreated(data as Invoice)
   }
 
-  return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <p className="form-error" role="alert">{error}</p>}</section>
+  return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
 function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary }) {
@@ -2290,7 +2421,7 @@ function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, i
       <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
       <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
       {canViewDentalChart && userId && <DentalChart clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && visit.appointment_id === null} />}
-      {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <p className="inline-state">No invoice for this visit.</p> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
+      {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <SoapSmileEmptyState><p>No invoice for this visit.</p></SoapSmileEmptyState> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
     </article>
   )
 }
@@ -2312,7 +2443,7 @@ function InvoiceCard({ invoice, payments, clinicName, patient, canRecordPayment,
 
   const canRecordInvoicePayment = canRecordPayment && invoice.balance > 0 && (invoice.status === 'draft' || invoice.status === 'partially_paid')
 
-  return <section className="invoice-card"><div className="invoice-header"><div><span>Invoice</span><strong>{invoice.invoice_number}</strong></div><span className={`invoice-status invoice-${invoice.status}`}>{formatStatus(invoice.status)}</span></div><div className="invoice-totals"><div><span>Total</span><strong>{formatMoney(invoice.total, invoice.currency)}</strong></div><div><span>Paid</span><strong>{formatMoney(invoice.amount_paid, invoice.currency)}</strong></div><div><span>Balance</span><strong>{formatMoney(invoice.balance, invoice.currency)}</strong></div></div>{payments.length > 0 && <div className="payment-list"><span>Payments</span>{payments.map((payment) => <div className="payment-history-row" key={payment.id}><p>{formatMoney(payment.amount, invoice.currency)} · {formatStatus(payment.payment_method)}{payment.reference ? ` · ${payment.reference}` : ''} · {formatDateTime(payment.payment_date)}</p><button className="button-secondary inline-button" onClick={() => onViewReceipt(patient, invoice, payment)} type="button">View Receipt</button></div>)}</div>}{canRecordInvoicePayment && <PaymentForm invoice={invoice} onRecorded={handlePaymentRecorded} />}{receiptPayment && <PaymentConfirmation clinicName={clinicName} patient={patient} invoice={invoice} payment={receiptPayment} onViewReceipt={() => onViewReceipt(patient, invoice, receiptPayment)} />}{error && <p className="form-error" role="alert">{error}</p>}</section>
+  return <section className="invoice-card"><div className="invoice-header"><div><span>Invoice</span><strong>{invoice.invoice_number}</strong><time dateTime={invoice.created_at}>{formatDateTime(invoice.created_at)}</time></div><span className={`invoice-status invoice-${invoice.status}`}>{formatStatus(invoice.status)}</span></div><div className="invoice-totals"><div><span>Total</span><strong>{formatMoney(invoice.total, invoice.currency)}</strong></div><div><span>Paid</span><strong>{formatMoney(invoice.amount_paid, invoice.currency)}</strong></div><div><span>Balance</span><strong>{formatMoney(invoice.balance, invoice.currency)}</strong></div></div>{payments.length > 0 && <div className="payment-list"><span>Payments</span>{payments.map((payment) => <div className="payment-history-row" key={payment.id}><p>{formatMoney(payment.amount, invoice.currency)} · {formatStatus(payment.payment_method)}{payment.reference ? ` · ${payment.reference}` : ''} · {formatDateTime(payment.payment_date)}</p><button className="button-secondary inline-button" onClick={() => onViewReceipt(patient, invoice, payment)} type="button">View Receipt</button></div>)}</div>}{canRecordInvoicePayment && <PaymentForm invoice={invoice} onRecorded={handlePaymentRecorded} />}{receiptPayment && <PaymentConfirmation clinicName={clinicName} patient={patient} invoice={invoice} payment={receiptPayment} onViewReceipt={() => onViewReceipt(patient, invoice, receiptPayment)} />}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
 function PaymentForm({ invoice, onRecorded }: { invoice: Invoice; onRecorded: (payment: Payment) => void }) {
@@ -2352,7 +2483,7 @@ function PaymentForm({ invoice, onRecorded }: { invoice: Invoice; onRecorded: (p
     onRecorded(data as Payment)
   }
 
-  return <form className="payment-form" onSubmit={handleSubmit}><input type="number" min="0.01" step="0.01" placeholder="Amount" value={amount} onChange={(event) => setAmount(event.target.value)} required /><select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>{methods.map((paymentMethod) => <option key={paymentMethod} value={paymentMethod}>{formatStatus(paymentMethod)}</option>)}</select><input placeholder="Reference (optional)" value={reference} onChange={(event) => setReference(event.target.value)} /><button type="submit" disabled={submitting}>{submitting ? 'Recording...' : invoice.status === 'partially_paid' ? 'Record Another Payment' : 'Record Payment'}</button>{error && <p className="form-error" role="alert">{error}</p>}</form>
+  return <form className="payment-form" onSubmit={handleSubmit}><input type="number" min="0.01" step="0.01" aria-label="Amount" placeholder="Amount" value={amount} onChange={(event) => setAmount(event.target.value)} required /><select aria-label="Payment method" value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>{methods.map((paymentMethod) => <option key={paymentMethod} value={paymentMethod}>{formatStatus(paymentMethod)}</option>)}</select><input aria-label="Reference (optional)" placeholder="Reference (optional)" value={reference} onChange={(event) => setReference(event.target.value)} /><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="payment" />Processing payment...</> : invoice.status === 'partially_paid' ? 'Record Another Payment' : 'Record Payment'}</button>{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</form>
 }
 
 function PaymentConfirmation({ clinicName, patient, invoice, payment, onViewReceipt }: { clinicName: string; patient: Patient; invoice: Invoice; payment: Payment; onViewReceipt: () => void }) {
@@ -2639,10 +2770,18 @@ function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }
       {!defaultOpen && <button className="dental-chart-toggle" type="button" aria-expanded={isOpen} onClick={() => setIsOpen((open) => !open)}>Dental chart {isOpen ? '−' : '+'}</button>}
       {isOpen && <>
         {defaultOpen && <div className="dental-chart-heading"><div><p className="card-label">Dental chart</p><h3>Odontogram</h3></div><span>Visit {formatDateTime(visit.visit_date)}</span></div>}
+        <div className="dental-workstation"><div className="odontogram-canvas">
+        <div className="odontogram-canvas-heading"><span>PERMANENT DENTITION</span><span>FDI notation · patient perspective</span></div>
         <div className="odontogram-quadrants">{adultDentalQuadrants.map((quadrant) => <section className="odontogram-quadrant" key={quadrant.label}><h4>{quadrant.label}</h4><div>{quadrant.teeth.map((toothNumber) => {
           const hasEntries = entries.some((entry) => entry.tooth_number === toothNumber)
-          return <button className={`odontogram-tooth${selectedTooth === toothNumber ? ' selected' : ''}${hasEntries ? ' has-entry' : ''}`} key={toothNumber} type="button" aria-pressed={selectedTooth === toothNumber} aria-label={`Tooth ${toothNumber}${hasEntries ? ', has recorded entries' : ''}`} onClick={() => { setSelectedTooth(toothNumber); setSurfaces([]) }}>{toothNumber}</button>
+          const hasFinding = entries.some((entry) => entry.tooth_number === toothNumber && entry.finding)
+          const hasProcedure = entries.some((entry) => entry.tooth_number === toothNumber && entry.procedure_text)
+          return <button className={`odontogram-tooth${selectedTooth === toothNumber ? ' selected' : ''}${hasEntries ? ' has-entry' : ''}${hasFinding ? ' has-finding' : ''}${hasProcedure ? ' has-procedure' : ''}`} key={toothNumber} type="button" aria-pressed={selectedTooth === toothNumber} aria-label={`Tooth ${toothNumber}${hasEntries ? ', has recorded entries' : ''}${hasFinding ? ', recorded finding' : ''}${hasProcedure ? ', recorded treatment' : ''}`} onClick={() => { setSelectedTooth(toothNumber); setSurfaces([]) }}><SoapSmileTooth number={toothNumber} /><span>{toothNumber}</span><span className="tooth-indicators" aria-hidden="true">{hasFinding && <i className="finding-dot" />}{hasProcedure && <i className="procedure-dot" />}</span></button>
         })}</div></section>)}</div>
+        <div className="odontogram-legend"><span><i className="selection-dot" />Selected tooth</span><span><i className="finding-dot" />Recorded finding</span><span><i className="procedure-dot" />Recorded treatment</span></div>
+        <p className="odontogram-disclaimer">Markers indicate recorded history, not current condition or treatment status.</p>
+        </div><div className="dental-context-panel">
+        <div className="dental-selected-context"><SoapSmileIcon name="odontogram" /><div><span className="summary-overline">TOOTH CONTEXT</span><strong>{selectedTooth === null ? 'Select a tooth to inspect' : `Tooth ${selectedTooth} · FDI`}</strong><small>{selectedTooth === null ? 'Choose a tooth on the chart.' : `${entries.filter((entry) => entry.tooth_number === selectedTooth).length} recorded entries in patient history`}</small></div></div>
         {canCreate && <form className="dental-entry-form" onSubmit={saveEntry}>
           <h4>{selectedTooth === null ? 'Select a tooth' : `Tooth ${selectedTooth}`}</h4>
           <fieldset disabled={selectedTooth === null || saving}>
@@ -2650,13 +2789,15 @@ function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }
             <div className="dental-surface-options">{availableSurfaces.map((surface) => <label key={surface.value}><input type="checkbox" checked={surfaces.includes(surface.value)} onChange={(event) => setSurfaces((current) => event.target.checked ? [...current, surface.value] : current.filter((value) => value !== surface.value))} />{surface.label}</label>)}</div>
           </fieldset>
           <div className="dental-entry-fields"><label>Finding / condition<input value={finding} onChange={(event) => setFinding(event.target.value)} maxLength={500} placeholder="For example, caries" disabled={selectedTooth === null || saving} /></label><label>Treatment / procedure<input value={procedureText} onChange={(event) => setProcedureText(event.target.value)} maxLength={500} placeholder="For example, restoration" disabled={selectedTooth === null || saving} /></label><label className="dental-notes">Notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} maxLength={2000} disabled={selectedTooth === null || saving} /></label></div>
-          <button type="submit" disabled={saving || selectedTooth === null || (!finding.trim() && !procedureText.trim())}>{saving ? 'Saving...' : 'Save Entry'}</button>
+          <button type="submit" disabled={saving || selectedTooth === null || (!finding.trim() && !procedureText.trim())}>{saving ? <><SoapSmileCompanion state="saving" />Saving...</> : 'Save Entry'}</button>
         </form>}
-        {loading && <p className="inline-state" role="status">Loading dental history...</p>}
-        {!loading && entries.length === 0 && <p className="inline-state">No dental entries recorded for this patient.</p>}
-        {entries.length > 0 && <div className="dental-entry-history"><h4>Patient dental history</h4>{entries.map((entry) => <article className="dental-entry" key={entry.id}><div><strong>Tooth {entry.tooth_number}</strong><time>{visitDates[entry.visit_id] ? `Visit ${formatDateTime(visitDates[entry.visit_id])} · ` : ''}Recorded {formatDateTime(entry.created_at)}</time></div>{entry.surfaces.length > 0 && <span>{entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ')}</span>}{entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}</article>)}</div>}
-        {message && <p className="dental-message" role="status">{message}</p>}
-        {error && <p className="form-error" role="alert">{error}</p>}
+        {!canCreate && <p className="dental-context-note">Review recorded findings and treatments in the patient dental history below.</p>}
+        </div></div>
+        {loading && <SoapSmileLoadingState>Loading dental history...</SoapSmileLoadingState>}
+        {!loading && entries.length === 0 && <SoapSmileEmptyState><p>No dental entries recorded for this patient.</p></SoapSmileEmptyState>}
+        {entries.length > 0 && <div className="dental-entry-history" tabIndex={0} role="region" aria-label="Patient dental history"><h4>Patient dental history</h4>{entries.map((entry) => <article className="dental-entry" key={entry.id}><div><strong>Tooth {entry.tooth_number}</strong><time>{visitDates[entry.visit_id] ? `Visit ${formatDateTime(visitDates[entry.visit_id])} · ` : ''}Recorded {formatDateTime(entry.created_at)}</time></div>{entry.surfaces.length > 0 && <span>{entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ')}</span>}{entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}</article>)}</div>}
+        {message && <SoapSmileFeedback tone="success">{message}</SoapSmileFeedback>}
+        {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
       </>}
     </section>
   )
@@ -2755,8 +2896,8 @@ function AppointmentForm({ clinicId, timezone, userId, patient, onCancel, onCrea
   return (
     <section className="registration-panel appointment-form-panel" aria-labelledby="book-appointment-heading">
       <div className="registration-heading"><p className="eyebrow">Appointment booking</p><h2 id="book-appointment-heading">Book Appointment</h2><p className="panel-copy">For {[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p></div>
-      {loadingDoctors && <p className="inline-state" role="status">Loading doctors...</p>}
-      {!loadingDoctors && doctorError && <p className="form-error" role="alert">{doctorError}</p>}
+      {loadingDoctors && <SoapSmileLoadingState>Loading doctors...</SoapSmileLoadingState>}
+      {!loadingDoctors && doctorError && <SoapSmileFeedback tone="error">{doctorError}</SoapSmileFeedback>}
       {!loadingDoctors && !doctorError && <form className="patient-form" onSubmit={handleSubmit}>
         <label>Patient<input value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} readOnly /></label>
         <label>Doctor<select value={form.doctor_id} onChange={(event) => updateField('doctor_id', event.target.value)} required><option value="">Select doctor</option>{doctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}</select></label>
@@ -2768,7 +2909,7 @@ function AppointmentForm({ clinicId, timezone, userId, patient, onCancel, onCrea
         <label className="full-width">Notes<textarea value={form.notes} onChange={(event) => updateField('notes', event.target.value)} rows={3} /></label>
         <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Booking appointment...' : 'Save appointment'}</button></div>
       </form>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
   )
 }
@@ -2867,9 +3008,9 @@ function PatientEditForm({ clinicId, patient, onCancel, onSaved }: { clinicId: s
         <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>
         <label>Email<input type="email" value={form.email} onChange={(event) => updateField('email', event.target.value)} autoComplete="email" /></label>
         <label className="full-width">Address<input value={form.address} onChange={(event) => updateField('address', event.target.value)} autoComplete="street-address" /></label>
-        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Saving changes...' : 'Save changes'}</button></div>
+        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving changes...</> : 'Save changes'}</button></div>
       </form>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
   )
 }
@@ -2918,7 +3059,8 @@ function formatMoney(value: number, currency: string) {
 }
 
 function StatusScreen({ message, action }: { message: string; action?: React.ReactNode }) {
-  return <main className="auth-page"><section className="auth-panel"><p className="eyebrow">SmartDental HMIS</p><p className="panel-copy">{message}</p>{action}</section></main>
+  const isLoading = message.startsWith('Loading')
+  return <main className="auth-page auth-page-status"><section className="auth-panel status-panel"><SoapSmileBrand className="login-brand" />{isLoading && <SoapSmileLoader size="large" />}<p className="panel-copy" role={isLoading ? 'status' : undefined}>{message}</p>{action}</section></main>
 }
 
 export default App
