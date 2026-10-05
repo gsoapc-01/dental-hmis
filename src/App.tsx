@@ -5,7 +5,8 @@ import './App.css'
 import './SoapSmileWorkstation.css'
 import './SoapSmileThemes.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
-import { supabase } from './lib/supabase'
+import { correctDentalChartEntry, supabase } from './lib/supabase'
+import { inspectDentalEntryChains } from './lib/odontogram'
 import { SoapSmileBillingPatientList, SoapSmileBrand, SoapSmileCompanion, SoapSmileCompanionDock, SoapSmileEmptyState, SoapSmileFeedback, SoapSmileIcon, SoapSmileInvoiceSummary, SoapSmileLoader, SoapSmileLoadingState, SoapSmileLoginEnvironment, SoapSmileOperationsCore, SoapSmileTooth } from './SoapSmilePresentation'
 import { SoapSmileThemePicker, SoapSmileThemeToggle } from './SoapSmileTheme'
 import { useSoapSmileTheme } from './useSoapSmileTheme'
@@ -142,7 +143,7 @@ function App() {
   if (membershipError) return <StatusScreen message={membershipError} action={membershipError === 'Your clinic access is inactive. Contact a clinic administrator.' ? <button onClick={() => void handleInactiveSignOut()} type="button">Sign Out</button> : <button onClick={() => window.location.reload()} type="button">Try again</button>} />
   if (!membershipContext) return <ClinicSetupScreen user={session!.user} />
 
-  return <ClinicShell context={membershipContext} />
+  return <ClinicShell key={membershipContext.user.id + ':' + membershipContext.clinic.id} context={membershipContext} />
 }
 
 function LoginScreen({ error, onError }: { error: string | null; onError: (value: string | null) => void }) {
@@ -234,7 +235,7 @@ function ClinicSetupScreen({ user }: { user: User }) {
 }
 
 function ClinicShell({ context }: { context: MembershipContext }) {
-  const { theme, changeTheme } = useSoapSmileTheme()
+  const { theme, changeTheme } = useSoapSmileTheme(context.user.id)
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [activeModule, setActiveModule] = useState('Dashboard')
   const [patientToOpen, setPatientToOpen] = useState<Patient | null>(null)
@@ -242,6 +243,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   const [clinic, setClinic] = useState(context.clinic)
   const canViewFinance = context.membership.role === 'admin' || context.membership.role === 'receptionist'
   const canManageClinicSettings = context.membership.role === 'admin' && context.membership.is_active
+  const canViewOdontogram = context.membership.is_active && ['admin', 'doctor'].includes(context.membership.role)
 
   function navigateToModule(module: string) {
     setPatientToOpen(null)
@@ -280,6 +282,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
           <button className={`nav-item nav-button${activeModule === 'Dashboard' ? ' active' : ''}`} onClick={() => navigateToModule('Dashboard')} type="button"><SoapSmileIcon name="dashboard" />Dashboard</button>
           <button className={`nav-item nav-button${activeModule === 'Clinical Visits' ? ' active' : ''}`} onClick={() => navigateToModule('Clinical Visits')} type="button"><SoapSmileIcon name="clinical" />Clinical Visits</button>
           <button className={`nav-item nav-button${activeModule === 'Appointments' ? ' active' : ''}`} onClick={() => navigateToModule('Appointments')} type="button"><SoapSmileIcon name="appointments" />Appointments</button>
+          {canViewOdontogram && <button className={`nav-item nav-button${activeModule === 'Odontogram' ? ' active' : ''}`} aria-current={activeModule === 'Odontogram' ? 'page' : undefined} onClick={() => navigateToModule('Odontogram')} type="button"><SoapSmileIcon name="odontogram" />Odontogram</button>}
           <p className="nav-label nav-label-spaced">Management</p>
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Billing' ? ' active' : ''}`} onClick={() => navigateToModule('Billing')} type="button"><SoapSmileIcon name="billing" />Billing</button>}
           {canViewFinance && <button className={`nav-item nav-button${activeModule === 'Reports' ? ' active' : ''}`} onClick={() => navigateToModule('Reports')} type="button"><SoapSmileIcon name="reports" />Reports</button>}
@@ -293,7 +296,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">{clinic.name}</p><p className="topbar-title">{activeModule}</p></div><div className="soap-topbar-actions"><SoapSmileThemeToggle theme={theme} onChange={changeTheme} /><div className="topbar-meta"><span className="status-indicator" /><SoapSmileIcon name="shield" />Secure session</div></div></header>
-        {activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} onViewPatient={openPatientHistory} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} clinicName={clinic.name} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} theme={theme} onThemeChange={changeTheme} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} onOpenBilling={() => navigateToModule('Billing')} onOpenAppointments={() => navigateToModule('Appointments')} />}
+        {activeModule === 'Odontogram' && canViewOdontogram ? <OdontogramWorkspace clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} onViewPatient={openPatientHistory} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} clinicName={clinic.name} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} theme={theme} onThemeChange={changeTheme} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} onOpenBilling={() => navigateToModule('Billing')} onOpenAppointments={() => navigateToModule('Appointments')} />}
         <SoapSmileCompanionDock />
       </section>
     </main>
@@ -387,6 +390,7 @@ function auditDetailText(metadata: unknown) {
 }
 
 function auditActionSentence(event: AuditLog) {
+  if (event.action === 'corrected' && event.table_name === 'dental_chart_entries') return 'corrected an odontogram entry'
   if (event.action === 'currency_changed') return 'changed clinic currency'
   if (event.action === 'status_changed') return 'changed appointment status'
   if (event.action === 'consultation_updated') return 'updated a consultation'
@@ -1627,7 +1631,7 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
       {!loading && !error && transitionError && <SoapSmileFeedback tone="error">{transitionError}</SoapSmileFeedback>}
       {queueSuccess && <SoapSmileFeedback tone="success">{queueSuccess}</SoapSmileFeedback>}
       {queueExit && <QueueExitDialog appointment={queueExit.appointment} patient={patients[queueExit.appointment.patient_id]} status={queueExit.status} onClose={() => setQueueExit(null)} onConfirm={confirmQueueExit} />}
-      {activeConsultation && <><ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} /><DentalChart clinicId={clinicId} visit={activeConsultation.visit} userId={userId} canCreate defaultOpen /></>}
+      {activeConsultation && <><ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} /><DentalChart role={role} clinicId={clinicId} visit={activeConsultation.visit} userId={userId} canCreate defaultOpen /></>}
       {!loading && !error && !hasAppointments && <SoapSmileEmptyState icon="appointments"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></SoapSmileEmptyState>}
       {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <SoapSmileEmptyState icon="appointments"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></SoapSmileEmptyState>}
       {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list" tabIndex={0} role="region" aria-label="Appointment list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} onQueueExit={(appointment, status) => { setQueueSuccess(null); setQueueExit({ appointment, status }) }} transitioning={transitioningId === appointment.id} />)}</div>}
@@ -2481,7 +2485,7 @@ function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, i
       <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div><div className="visit-card-actions">{isLatest && <span className="latest-badge">Latest</span>}{onPrintVisitSummary && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianLabel, prescriptions, investigations)} type="button">Print Visit Summary</button>}</div></div>
       <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
       <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
-      {canViewDentalChart && userId && <DentalChart clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && visit.appointment_id === null} />}
+      {canViewDentalChart && userId && <DentalChart role={role} clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && visit.appointment_id === null} />}
       {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <SoapSmileEmptyState><p>No invoice for this visit.</p></SoapSmileEmptyState> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
     </article>
   )
@@ -2715,9 +2719,112 @@ const adultDentalQuadrants = [
   { label: 'Lower left', teeth: [31, 32, 33, 34, 35, 36, 37, 38] },
 ]
 
-function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }: { clinicId: string; visit: Visit; userId: string; canCreate: boolean; defaultOpen?: boolean }) {
+function OdontogramWorkspace({ clinicId, userId, role }: { clinicId: string; userId: string; role: UserRole }) {
+  const [patients, setPatients] = useState<Patient[]>([])
+  const [search, setSearch] = useState('')
+  const [patient, setPatient] = useState<Patient | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refresh, setRefresh] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      if (!supabase) { setError('Supabase is not configured.'); setLoading(false); return }
+      setLoading(true)
+      setError(null)
+      try {
+        const rows: Patient[] = []
+        for (let offset = 0; ;) {
+          const result = await supabase.from('patients').select('*').eq('clinic_id', clinicId).order('created_at', { ascending: false }).order('id').range(offset, offset + 499)
+          if (result.error) throw result.error
+          const batch = (result.data ?? []) as Patient[]
+          if (!batch.length) break
+          rows.push(...batch)
+          offset += batch.length
+        }
+        if (!cancelled) setPatients(rows)
+      } catch { if (!cancelled) { setPatients([]); setError('We could not retrieve patients. Refresh and try again.') } }
+      finally { if (!cancelled) setLoading(false) }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [clinicId, refresh])
+
+  const normalizedSearch = search.trim().toLowerCase()
+  const matches = patients.filter((row) => [row.patient_number, row.first_name, row.middle_name, row.last_name, row.phone].some((value) => value?.toLowerCase().includes(normalizedSearch)))
+  const [page, setPage] = useState(1)
+  const pageCount = Math.max(1, Math.ceil(matches.length / 8))
+  const effectivePage = Math.max(1, Math.min(page, pageCount))
+
+  return <div className="patients-page odontogram-page"><div className="page-heading"><div><p className="eyebrow">Clinical dental records</p><h1>Odontogram</h1><p className="panel-copy">Find a patient to review tooth history, record in an eligible visit, or correct your latest entry.</p></div><button type="button" className="button-secondary" onClick={() => setRefresh((value) => value + 1)}>Refresh patients</button></div>
+    <div className="odontogram-workspace"><aside className="odontogram-patient-finder"><PatientSearchField label="Search patients" value={search} onChange={(value) => { setSearch(value); setPage(1) }} placeholder="File number, name, or phone" />
+      {loading && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+      {!loading && !error && <><p className="result-count">{matches.length} matching patients</p><div className="odontogram-patient-results">{matches.slice((effectivePage - 1) * 8, effectivePage * 8).map((row) => <button type="button" className={patient?.id === row.id ? 'selected' : ''} aria-pressed={patient?.id === row.id} key={row.id} onClick={() => setPatient(row)}><strong>{[row.first_name, row.middle_name, row.last_name].filter(Boolean).join(' ')}</strong><span>File {row.patient_number}</span><small>{row.phone || 'Phone not recorded'}</small></button>)}</div><div className="form-actions"><button type="button" className="button-secondary" disabled={effectivePage === 1} onClick={() => setPage(effectivePage - 1)}>Previous</button><span>{effectivePage} / {pageCount}</span><button type="button" className="button-secondary" disabled={effectivePage === pageCount} onClick={() => setPage(effectivePage + 1)}>Next</button></div>{matches.length === 0 && <SoapSmileEmptyState><p>No matching patients. Try a file number, name, or phone.</p></SoapSmileEmptyState>}</>}
+    </aside><section className="odontogram-patient-workspace" aria-label="Selected patient odontogram">{patient ? <PatientOdontogram key={clinicId + ':' + patient.id} clinicId={clinicId} patient={patient} userId={userId} role={role} /> : <SoapSmileEmptyState icon="odontogram"><h2>Select a patient</h2><p>Patient identity, dental chart and correction history will appear here.</p></SoapSmileEmptyState>}</section></div>
+  </div>
+}
+
+function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: string; patient: Patient; userId: string; role: UserRole }) {
+  const [visits, setVisits] = useState<Visit[]>([])
+  const [statuses, setStatuses] = useState<Record<string, AppointmentStatus>>({})
+  const [visitId, setVisitId] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refresh, setRefresh] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      if (!supabase) { setError('Supabase is not configured.'); setLoading(false); return }
+      setLoading(true)
+      setError(null)
+      try {
+        const rows: Visit[] = []
+        for (let offset = 0; ;) {
+          const result = await supabase.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('visit_date', { ascending: false }).order('id').range(offset, offset + 499)
+          if (result.error) throw result.error
+          const batch = (result.data ?? []) as Visit[]
+          if (!batch.length) break
+          rows.push(...batch)
+          offset += batch.length
+        }
+        const appointmentIds = [...new Set(rows.flatMap((row) => row.appointment_id ? [row.appointment_id] : []))]
+        const appointmentStatuses: Record<string, AppointmentStatus> = {}
+        for (let start = 0; start < appointmentIds.length; start += 100) {
+          const result = await supabase.from('appointments').select('id, status').eq('clinic_id', clinicId).in('id', appointmentIds.slice(start, start + 100))
+          if (result.error) throw result.error
+          for (const row of (result.data ?? []) as Array<Pick<Appointment, 'id' | 'status'>>) appointmentStatuses[row.id] = row.status
+        }
+        const canRecord = (row: Visit) => (role === 'admin' || row.doctor_id === userId) && (!row.appointment_id || appointmentStatuses[row.appointment_id] === 'in_progress')
+        const preferred = rows.find((row) => row.appointment_id && canRecord(row)) ?? rows.find(canRecord) ?? rows[0]
+        if (cancelled) return
+        setVisits(rows)
+        setStatuses(appointmentStatuses)
+        setVisitId(preferred?.id ?? '')
+      } catch { if (!cancelled) { setVisits([]); setError('We could not verify clinical visit context. Refresh and try again.') } }
+      finally { if (!cancelled) setLoading(false) }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [clinicId, patient.id, role, userId, refresh])
+  const visit = visits.find((row) => row.id === visitId) ?? null
+  const canCreate = Boolean(visit && (role === 'admin' || visit.doctor_id === userId) && (!visit.appointment_id || statuses[visit.appointment_id] === 'in_progress'))
+  return <><div className="odontogram-patient-identity"><div><p className="eyebrow">Patient dental workspace</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><strong>File {patient.patient_number}</strong></div><button type="button" className="button-secondary" disabled={loading} onClick={() => setRefresh((value) => value + 1)}>Refresh visit context</button></div>
+    {loading && <SoapSmileLoadingState>Verifying clinical visits...</SoapSmileLoadingState>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {!loading && !error && <>{visits.length > 0 && <label className="odontogram-visit-picker">Recording / review visit<select value={visitId} onChange={(event) => setVisitId(event.target.value)}>{visits.map((row) => <option key={row.id} value={row.id}>{formatDateTime(row.visit_date)} - {row.appointment_id ? statuses[row.appointment_id]?.replaceAll('_', ' ') || 'Review only' : 'Standalone clinical visit'}</option>)}</select></label>}
+      {!canCreate && <p className="dental-context-note">History is available for review. New recording requires an eligible existing clinical visit or an in-progress consultation with appropriate authorization. No new visit or appointment is created here.</p>}
+      <DentalChart key={visitId + ':' + refresh} clinicId={clinicId} patientId={patient.id} visit={visit} userId={userId} role={role} canCreate={canCreate} defaultOpen />
+    </>}
+  </>
+}
+
+function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defaultOpen = false }: { clinicId: string; visit: Visit | null; patientId?: string; userId: string; role?: UserRole; canCreate: boolean; defaultOpen?: boolean }) {
+  const chartPatientId = visit?.patient_id ?? patientId
   const [isOpen, setIsOpen] = useState(defaultOpen)
   const [entries, setEntries] = useState<DentalChartEntry[]>([])
+  const [correctableVisits, setCorrectableVisits] = useState<string[]>([])
+  const [clinicianNames, setClinicianNames] = useState<Record<string, string>>({})
+  const [correctionEntry, setCorrectionEntry] = useState<DentalChartEntry | null>(null)
   const [visitDates, setVisitDates] = useState<Record<string, string>>({})
   const [selectedTooth, setSelectedTooth] = useState<number | null>(null)
   const [surfaces, setSurfaces] = useState<DentalSurface[]>([])
@@ -2735,47 +2842,76 @@ function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }
     let cancelled = false
 
     async function loadEntries() {
-      if (!supabase) {
+      if (!supabase || !chartPatientId) {
         setError('Supabase is not configured.')
         return
       }
       setLoading(true)
-      const { data: visitRows, error: visitsError } = await supabase
-        .from('visits')
-        .select('id, visit_date')
-        .eq('clinic_id', clinicId)
-        .eq('patient_id', visit.patient_id)
-
-      if (cancelled) return
-      if (visitsError) {
-        setLoading(false)
-        setError('We could not load this patient\'s visit history.')
-        return
+      try {
+        const patientVisits: Array<Pick<Visit, 'id' | 'visit_date' | 'doctor_id' | 'appointment_id'>> = []
+        // Read every page: a truncated history could mistake a superseded row for current.
+        for (let offset = 0; ;) {
+          const result = await supabase.from('visits').select('id, visit_date, doctor_id, appointment_id')
+            .eq('clinic_id', clinicId).eq('patient_id', chartPatientId).order('id').range(offset, offset + 499)
+          if (result.error) throw result.error
+          const rows = (result.data ?? []) as typeof patientVisits
+          patientVisits.push(...rows)
+          if (rows.length === 0) break
+          offset += rows.length
+        }
+        const allEntries: DentalChartEntry[] = []
+        const appointmentStatuses: Record<string, AppointmentStatus> = {}
+        const names: Record<string, string> = {}
+        for (let batch = 0; batch < patientVisits.length; batch += 100) {
+          const visits = patientVisits.slice(batch, batch + 100)
+          for (let offset = 0; ;) {
+            const result = await supabase.from('dental_chart_entries').select('*').eq('clinic_id', clinicId)
+              .in('visit_id', visits.map((row) => row.id)).order('created_at').order('id').range(offset, offset + 499)
+            if (result.error) throw result.error
+            const rows = (result.data ?? []) as DentalChartEntry[]
+            allEntries.push(...rows)
+            if (rows.length === 0) break
+            offset += rows.length
+          }
+          const appointmentIds = visits.flatMap((row) => row.appointment_id ? [row.appointment_id] : [])
+          if (appointmentIds.length) {
+            const result = await supabase.from('appointments').select('id, status').eq('clinic_id', clinicId).in('id', appointmentIds)
+            if (result.error) throw result.error
+            for (const row of (result.data ?? []) as Array<Pick<Appointment, 'id' | 'status'>>) appointmentStatuses[row.id] = row.status
+          }
+        }
+        allEntries.sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id))
+        const authors = [...new Set(allEntries.map((entry) => entry.recorded_by))]
+        for (let batch = 0; batch < authors.length; batch += 100) {
+          const result = await supabase.from('profiles').select('id, display_name').in('id', authors.slice(batch, batch + 100))
+          for (const profile of (result.data ?? []) as Array<{ id: string; display_name?: string | null }>) {
+            names[profile.id] = profile.display_name?.trim() || 'Clinician name unavailable'
+          }
+        }
+        if (cancelled) return
+        setError(null)
+        setVisitDates(Object.fromEntries(patientVisits.map((row) => [row.id, row.visit_date])))
+        setCorrectableVisits(patientVisits.filter((row) => row.doctor_id === userId && (!row.appointment_id || ['in_progress', 'completed'].includes(appointmentStatuses[row.appointment_id]))).map((row) => row.id))
+        setClinicianNames(names)
+        setEntries(allEntries)
+      } catch {
+        if (cancelled) return
+        setEntries([])
+        setCorrectableVisits([])
+        setError('We could not load complete dental correction history. Refresh before continuing.')
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-
-      const patientVisits = (visitRows ?? []) as Array<Pick<Visit, 'id' | 'visit_date'>>
-      const { data, error: queryError } = await supabase
-        .from('dental_chart_entries')
-        .select('*')
-        .eq('clinic_id', clinicId)
-        .in('visit_id', patientVisits.map((patientVisit) => patientVisit.id))
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-
-      if (cancelled) return
-      setLoading(false)
-      if (queryError) {
-        setError('We could not load this visit\'s dental chart.')
-        return
-      }
-      setError(null)
-      setVisitDates(Object.fromEntries(patientVisits.map((patientVisit) => [patientVisit.id, patientVisit.visit_date])))
-      setEntries((data ?? []) as DentalChartEntry[])
     }
 
     void loadEntries()
     return () => { cancelled = true }
-  }, [clinicId, isOpen, refreshVersion, visit.id, visit.patient_id])
+  }, [clinicId, isOpen, refreshVersion, userId, visit?.id, chartPatientId])
+
+  const { chains, unverifiedEntries } = inspectDentalEntryChains(entries)
+  const unverifiedTeeth = new Set(unverifiedEntries.map((entry) => entry.tooth_number))
+  const effectiveEntries = chains.map((chain) => chain[chain.length - 1]).filter((entry) => !unverifiedTeeth.has(entry.tooth_number))
+  const canCorrect = (entry: DentalChartEntry) => !loading && role === 'doctor' && entry.recorded_by === userId && correctableVisits.includes(entry.visit_id) && !unverifiedTeeth.has(entry.tooth_number)
 
   const availableSurfaces = selectedTooth === null
     ? dentalSurfaceOptions.filter((surface) => surface.value !== 'occlusal' && surface.value !== 'incisal')
@@ -2793,7 +2929,7 @@ function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }
       setError('Select a tooth and enter a finding or treatment/procedure.')
       return
     }
-    if (!supabase) {
+    if (!supabase || !visit) {
       setError('Supabase is not configured.')
       return
     }
@@ -2830,17 +2966,17 @@ function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }
     <section className={`dental-chart${defaultOpen ? ' dental-chart-active' : ''}`}>
       {!defaultOpen && <button className="dental-chart-toggle" type="button" aria-expanded={isOpen} onClick={() => setIsOpen((open) => !open)}>Dental chart {isOpen ? '−' : '+'}</button>}
       {isOpen && <>
-        {defaultOpen && <div className="dental-chart-heading"><div><p className="card-label">Dental chart</p><h3>Odontogram</h3></div><span>Visit {formatDateTime(visit.visit_date)}</span></div>}
+        {defaultOpen && <div className="dental-chart-heading"><div><p className="card-label">Dental chart</p><h3>Odontogram</h3></div><span>{visit ? 'Visit ' + formatDateTime(visit.visit_date) : 'Patient dental history'}</span></div>}
         <div className="dental-workstation"><div className="odontogram-canvas">
         <div className="odontogram-canvas-heading"><span>PERMANENT DENTITION</span><span>FDI notation · patient perspective</span></div>
         <div className="odontogram-quadrants">{adultDentalQuadrants.map((quadrant) => <section className="odontogram-quadrant" key={quadrant.label}><h4>{quadrant.label}</h4><div>{quadrant.teeth.map((toothNumber) => {
-          const hasEntries = entries.some((entry) => entry.tooth_number === toothNumber)
-          const hasFinding = entries.some((entry) => entry.tooth_number === toothNumber && entry.finding)
-          const hasProcedure = entries.some((entry) => entry.tooth_number === toothNumber && entry.procedure_text)
+          const hasEntries = effectiveEntries.some((entry) => entry.tooth_number === toothNumber)
+          const hasFinding = effectiveEntries.some((entry) => entry.tooth_number === toothNumber && entry.finding)
+          const hasProcedure = effectiveEntries.some((entry) => entry.tooth_number === toothNumber && entry.procedure_text)
           return <button className={`odontogram-tooth${selectedTooth === toothNumber ? ' selected' : ''}${hasEntries ? ' has-entry' : ''}${hasFinding ? ' has-finding' : ''}${hasProcedure ? ' has-procedure' : ''}`} key={toothNumber} type="button" aria-pressed={selectedTooth === toothNumber} aria-label={`Tooth ${toothNumber}${hasEntries ? ', has recorded entries' : ''}${hasFinding ? ', recorded finding' : ''}${hasProcedure ? ', recorded treatment' : ''}`} onClick={() => { setSelectedTooth(toothNumber); setSurfaces([]) }}><SoapSmileTooth number={toothNumber} /><span>{toothNumber}</span><span className="tooth-indicators" aria-hidden="true">{hasFinding && <i className="finding-dot" />}{hasProcedure && <i className="procedure-dot" />}</span></button>
         })}</div></section>)}</div>
         <div className="odontogram-legend"><span><i className="selection-dot" />Selected tooth</span><span><i className="finding-dot" />Recorded finding</span><span><i className="procedure-dot" />Recorded treatment</span></div>
-        <p className="odontogram-disclaimer">Markers indicate recorded history, not current condition or treatment status.</p>
+        <p className="odontogram-disclaimer">Markers use the latest version of each recorded entry. They do not imply current condition or treatment completion.</p>
         </div><div className="dental-context-panel">
         <div className="dental-selected-context"><SoapSmileIcon name="odontogram" /><div><span className="summary-overline">TOOTH CONTEXT</span><strong>{selectedTooth === null ? 'Select a tooth to inspect' : `Tooth ${selectedTooth} · FDI`}</strong><small>{selectedTooth === null ? 'Choose a tooth on the chart.' : `${entries.filter((entry) => entry.tooth_number === selectedTooth).length} recorded entries in patient history`}</small></div></div>
         {canCreate && <form className="dental-entry-form" onSubmit={saveEntry}>
@@ -2855,13 +2991,83 @@ function DentalChart({ clinicId, visit, userId, canCreate, defaultOpen = false }
         {!canCreate && <p className="dental-context-note">Review recorded findings and treatments in the patient dental history below.</p>}
         </div></div>
         {loading && <SoapSmileLoadingState>Loading dental history...</SoapSmileLoadingState>}
-        {!loading && entries.length === 0 && <SoapSmileEmptyState><p>No dental entries recorded for this patient.</p></SoapSmileEmptyState>}
-        {entries.length > 0 && <div className="dental-entry-history" tabIndex={0} role="region" aria-label="Patient dental history"><h4>Patient dental history</h4>{entries.map((entry) => <article className="dental-entry" key={entry.id}><div><strong>Tooth {entry.tooth_number}</strong><time>{visitDates[entry.visit_id] ? `Visit ${formatDateTime(visitDates[entry.visit_id])} · ` : ''}Recorded {formatDateTime(entry.created_at)}</time></div>{entry.surfaces.length > 0 && <span>{entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ')}</span>}{entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}</article>)}</div>}
+        <div className="dental-history-heading"><h4>Current entries / Corrections</h4>{selectedTooth !== null && <button type="button" className="button-secondary inline-button" onClick={() => { setSelectedTooth(null); setSurfaces([]) }}>Show all teeth</button>}<button type="button" className="button-secondary inline-button" disabled={loading} onClick={() => setRefreshVersion((version) => version + 1)}>Refresh history</button></div>
+        <p className="dental-context-note">To correct an entry, use Correct entry beside its latest version below. Corrections require the active assigned doctor who originally recorded it; administrator access alone does not permit corrections.</p>
+        {effectiveEntries.length > 0 && <div className="dental-current-entries" role="region" aria-label="Current dental entries and correction actions" tabIndex={0}>{effectiveEntries.filter((entry) => selectedTooth === null || entry.tooth_number === selectedTooth).map((entry) => <article key={entry.id}><div><strong>Tooth {entry.tooth_number}</strong><p>{entry.finding || entry.procedure_text}</p><small>{clinicianNames[entry.recorded_by] || 'Clinician name unavailable'} - {formatDateTime(entry.created_at)}</small></div>{canCorrect(entry) ? <button type="button" className="button-secondary dental-correct-button" disabled={saving} onClick={() => { setCorrectionEntry(entry); setMessage(null) }}>Correct entry</button> : <small>Review only</small>}</article>)}</div>}
+        {unverifiedEntries.length > 0 && <SoapSmileFeedback tone="error">Some dental history has an incomplete or invalid correction chain. Current-state markers and correction actions are withheld for teeth {Array.from(unverifiedTeeth).sort((a, b) => a - b).join(', ')}. The unverified records remain below for review; refresh history and have the data reviewed.</SoapSmileFeedback>}
+        {!loading && !error && entries.length === 0 && <SoapSmileEmptyState><p>No dental entries recorded for this patient.</p></SoapSmileEmptyState>}
+        {entries.length > 0 && <div className="dental-entry-history" tabIndex={0} role="region" aria-label="Patient dental history"><h4>Patient dental history</h4>{chains.map((chain) => <section className="dental-correction-chain" key={chain[0].id}>{chain.map((entry, index) => {
+          const current = index === chain.length - 1
+          const correctable = current && canCorrect(entry)
+          return <article className={'dental-entry' + (current ? ' dental-entry-current' : ' dental-entry-superseded')} key={entry.id}>
+            <div><strong>Tooth {entry.tooth_number} - {index === 0 ? 'Original entry' : 'Correction ' + index}</strong><span className="dental-version-label">{current ? unverifiedTeeth.has(entry.tooth_number) ? 'Latest in chain / Tooth state unverified' : 'Latest / Current' : index === 0 ? 'Corrected' : 'Corrected again'}</span></div>
+            <time>{visitDates[entry.visit_id] ? 'Visit ' + formatDateTime(visitDates[entry.visit_id]) + ' - ' : ''}Recorded {formatDateTime(entry.created_at)}</time>
+            <p className="dental-entry-clinician">Recorded by {clinicianNames[entry.recorded_by] || 'Clinician name unavailable'}</p>
+            {entry.surfaces.length > 0 && <span>{entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ')}</span>}
+            {entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}
+            {entry.correction_reason && <p className="dental-correction-reason"><b>Correction reason:</b> {entry.correction_reason}</p>}
+            {correctable && <button className="button-secondary dental-correct-button" type="button" disabled={saving} onClick={() => { setCorrectionEntry(entry); setMessage(null) }}>Correct entry</button>}
+            {!current && <span className="dental-chain-link" aria-hidden="true">Continued by the correction below</span>}
+          </article>
+        })}</section>)}</div>}
+        {unverifiedEntries.length > 0 && <div className="dental-entry-history" role="region" aria-label="Unverified dental history"><h4>Unverified dental history - excluded from current state</h4>{unverifiedEntries.map((entry, index) => <article className="dental-entry" key={entry.id + '-' + index}><strong>Tooth {entry.tooth_number} - Unverified {entry.supersedes_entry_id ? 'correction' : 'original entry'}</strong><p>Visit {formatDateTime(visitDates[entry.visit_id])} - Recorded {formatDateTime(entry.created_at)} by {clinicianNames[entry.recorded_by] || 'Clinician name unavailable'}</p><p>Surfaces: {entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ') || 'Not specified'}</p>{entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}{entry.correction_reason && <p><b>Correction reason:</b> {entry.correction_reason}</p>}</article>)}</div>}
+        {correctionEntry && <DentalCorrectionDialog key={correctionEntry.id} entry={correctionEntry} onClose={() => setCorrectionEntry(null)} onCorrected={() => { setCorrectionEntry(null); setMessage('Correction saved. The original remains in dental history.'); setRefreshVersion((version) => version + 1) }} />}
         {message && <SoapSmileFeedback tone="success">{message}</SoapSmileFeedback>}
         {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
       </>}
     </section>
   )
+}
+
+function DentalCorrectionDialog({ entry, onClose, onCorrected }: { entry: DentalChartEntry; onClose: () => void; onCorrected: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const [finding, setFinding] = useState(entry.finding ?? '')
+  const [procedure, setProcedure] = useState(entry.procedure_text ?? '')
+  const [notes, setNotes] = useState(entry.notes ?? '')
+  const [surfaces, setSurfaces] = useState<DentalSurface[]>(entry.surfaces)
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const element = dialog.current
+    element?.showModal()
+    return () => { element?.close() }
+  }, [])
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!reason.trim() || (!finding.trim() && !procedure.trim())) return
+    setSaving(true)
+    setError(null)
+    try {
+      const result = await correctDentalChartEntry({ p_entry_id: entry.id, p_surfaces: surfaces, p_finding: finding.trim() || null, p_procedure_text: procedure.trim() || null, p_notes: notes.trim() || null, p_reason: reason.trim() })
+      if (result.error) {
+        setError('Correction was not saved: ' + result.error.message + (result.error.code ? ' (Code ' + result.error.code + ')' : '') + '. Refresh history before trying again.')
+        return
+      }
+      onCorrected()
+    } catch {
+      setError('We could not confirm the correction. Check your connection and refresh history before trying again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <dialog ref={dialog} className="queue-exit-dialog dental-correction-dialog" aria-labelledby="dental-correction-title" onCancel={(event) => { event.preventDefault(); if (!saving) onClose() }}>
+    <form onSubmit={submit}>
+      <p className="eyebrow">Dental history correction</p><h2 id="dental-correction-title">Correct entry - Tooth {entry.tooth_number}</h2>
+      <p>This creates a new version on the same tooth and visit. The original stays permanently in history.</p>
+      <section className="dental-saved-summary"><h3>Current saved information</h3><p>{entry.finding || 'No finding recorded'}</p><p>{entry.procedure_text || 'No procedure recorded'}</p>{entry.notes && <p>{entry.notes}</p>}<p>Surfaces: {entry.surfaces.length ? entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ') : 'Not specified'}</p></section>
+      <fieldset disabled={saving}><legend>Corrected surfaces (optional)</legend><div className="dental-surface-options">{dentalSurfaceOptions.filter((surface) => surface.value !== 'occlusal' || entry.tooth_number % 10 >= 4).filter((surface) => surface.value !== 'incisal' || entry.tooth_number % 10 <= 3).map((surface) => <label key={surface.value}><input type="checkbox" checked={surfaces.includes(surface.value)} onChange={(event) => setSurfaces((current) => event.target.checked ? [...current, surface.value] : current.filter((value) => value !== surface.value))} />{surface.label}</label>)}</div></fieldset>
+      <label>Corrected finding / condition<input value={finding} onChange={(event) => setFinding(event.target.value)} maxLength={500} disabled={saving} /></label>
+      <label>Corrected treatment / procedure<input value={procedure} onChange={(event) => setProcedure(event.target.value)} maxLength={500} disabled={saving} /></label>
+      <label>Corrected notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} maxLength={2000} disabled={saving} /></label>
+      <label>Correction reason<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={2} maxLength={500} required disabled={saving} /></label>
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+      <div className="form-actions"><button type="button" className="button-secondary" disabled={saving} onClick={onClose}>Cancel</button><button type="submit" disabled={saving || !reason.trim() || (!finding.trim() && !procedure.trim())}>{saving ? 'Saving correction...' : 'Confirm correction'}</button></div>
+    </form>
+  </dialog>
 }
 
 type AppointmentFormValues = {

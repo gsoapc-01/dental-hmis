@@ -13,7 +13,7 @@ export function SoapSmileThemePicker({ theme, onChange }: { theme: SoapSmileThem
     { value: 'modern-light', name: 'Modern Light', description: 'Bright, clinical and intelligent.' },
     { value: 'dark-tech', name: 'Dark Tech', description: 'Focused, immersive and technical.' },
   ]
-  return <section className="soap-theme-settings" aria-labelledby="soap-theme-heading"><div className="section-heading"><div><p className="eyebrow">Your workspace</p><h2 id="soap-theme-heading">Appearance</h2><p>Choose the environment that feels right for you. Saved in this browser.</p></div></div>
+  return <section className="soap-theme-settings" aria-labelledby="soap-theme-heading"><div className="section-heading"><div><p className="eyebrow">Your workspace</p><h2 id="soap-theme-heading">Appearance</h2><p>Choose the environment that feels right for you. Saved for your account in this browser.</p></div></div>
     <div className="soap-theme-options" role="group" aria-label="Workspace theme">{themes.map((option) => <button className={`soap-theme-option${theme === option.value ? ' selected' : ''}`} key={option.value} type="button" aria-pressed={theme === option.value} onClick={() => onChange(option.value)}>
       <span className={`soap-theme-preview preview-${option.value}`} aria-hidden="true"><i /><span><b /><em /><em /></span></span>
       <span className="soap-theme-option-copy"><strong>{option.name}</strong><small>{option.description}</small></span><span className="soap-theme-choice" aria-hidden="true">{theme === option.value ? '✓' : ''}</span>

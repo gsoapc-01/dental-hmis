@@ -1172,3 +1172,34 @@ body { color: var(--slate-900); background: var(--canvas); }
 .queue-exit-dialog h2 { margin-top: 0; }
 .queue-exit-dialog label { display: grid; gap: .5rem; margin: 1rem 0; }
 .queue-exit-dialog textarea { width: 100%; box-sizing: border-box; }
+
+.dental-correction-dialog { width: min(620px, calc(100vw - 2rem)); max-height: 85vh; overflow-y: auto; background: var(--ws-surface-elevated, #fff); color: var(--ws-text, #16394b); }
+.dental-correction-dialog input:not([type="checkbox"]), .dental-correction-dialog textarea { width: 100%; box-sizing: border-box; }
+.dental-correction-dialog .dental-surface-options label { display: flex; align-items: center; gap: .4rem; margin: .25rem 0; }
+.dental-saved-summary { padding: .75rem 1rem; border: 1px solid var(--ws-border, #bed3e0); border-radius: .75rem; background: var(--ws-reading, #f9fcff); }
+.dental-saved-summary h3 { margin-top: 0; font-size: .9rem; }
+.dental-correction-chain { margin: .75rem 0; border: 1px solid var(--ws-border, #bed3e0); border-radius: .75rem; overflow: hidden; }
+.dental-correction-chain .dental-entry { margin: 0; border-radius: 0; }
+.dental-entry-current { border-inline-start: 3px solid var(--ws-accent, #126e78); }
+.dental-version-label { color: var(--ws-accent, #126e78); font-size: .75rem; font-weight: 700; }
+.dental-entry-clinician, .dental-chain-link { color: var(--ws-muted, #526e7e); font-size: .8rem; }
+.dental-chain-link { display: block; margin-top: .75rem; }
+.dental-correct-button { margin-top: .5rem; padding: .4rem .7rem; font-size: .8rem; }
+.dental-correction-reason { padding: .5rem .75rem; border-inline-start: 2px solid var(--ws-border, #bed3e0); overflow-wrap: anywhere; }
+
+.odontogram-workspace { display: grid; grid-template-columns: minmax(230px, 280px) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.odontogram-patient-finder, .odontogram-patient-workspace { min-width: 0; padding: 1rem; border: 1px solid var(--ws-border); border-radius: .75rem; background: var(--ws-surface); }
+.odontogram-patient-results { display: grid; gap: .5rem; max-height: 55svh; overflow: auto; }
+.odontogram-patient-results button { display: grid; gap: .3rem; text-align: left; padding: .75rem; color: var(--ws-text); background: var(--ws-reading); border: 1px solid var(--ws-border); }
+.odontogram-patient-results button.selected { background: var(--ws-accent-soft); border-color: var(--ws-accent); }
+.odontogram-patient-results small, .dental-current-entries small { color: var(--ws-muted); }
+.odontogram-patient-identity, .dental-history-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; }
+.odontogram-patient-identity h2 { margin: .25rem 0; }
+.odontogram-visit-picker { display: grid; gap: .5rem; margin: 1rem 0; }
+.odontogram-patient-workspace { max-height: calc(100svh - 210px); overflow: auto; scrollbar-width: thin; }
+.dental-current-entries { display: grid; gap: .5rem; max-height: 200px; overflow: auto; padding: .25rem; }
+.dental-current-entries article { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem; border: 1px solid var(--ws-border); border-radius: .5rem; background: var(--ws-reading); color: var(--ws-text); }
+.dental-current-entries p { margin: .25rem 0; }
+.dental-current-entries .dental-correct-button { flex-shrink: 0; margin: 0; }
+.odontogram-page button:focus-visible, .dental-current-entries button:focus-visible { outline: 2px solid var(--ws-accent); outline-offset: 3px; }
+@media (max-width: 1100px) { .odontogram-workspace { grid-template-columns: 1fr; } .odontogram-patient-results { max-height: 220px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); } .odontogram-patient-workspace { max-height: none; } }

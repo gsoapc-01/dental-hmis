@@ -150,6 +150,8 @@ export interface Visit {
 }
 
 export interface DentalChartEntry {
+  supersedes_entry_id?: string | null
+  correction_reason?: string | null
   id: string
   clinic_id: string
   visit_id: string

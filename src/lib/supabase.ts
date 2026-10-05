@@ -27,7 +27,7 @@ export interface Database {
       patients: { Row: Patient; Insert: Omit<Patient, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Patient> }
       appointments: { Row: Appointment; Insert: Omit<Appointment, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Appointment> }
       visits: { Row: Visit; Insert: Omit<Visit, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Visit> }
-      dental_chart_entries: { Row: DentalChartEntry; Insert: Omit<DentalChartEntry, 'id' | 'created_at'>; Update: Partial<DentalChartEntry> }
+      dental_chart_entries: { Row: DentalChartEntry; Insert: Omit<DentalChartEntry, 'id' | 'created_at' | 'supersedes_entry_id' | 'correction_reason'>; Update: never }
       prescriptions: { Row: Prescription; Insert: Omit<Prescription, 'id' | 'created_at'>; Update: Partial<Prescription> }
       investigations: { Row: Investigation; Insert: Omit<Investigation, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Investigation> }
       invoices: { Row: Invoice; Insert: Omit<Invoice, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Invoice> }
@@ -36,6 +36,10 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      correct_dental_chart_entry: {
+        Args: { p_entry_id: string; p_surfaces: string[]; p_finding: string | null; p_procedure_text: string | null; p_notes: string | null; p_reason: string }
+        Returns: DentalChartEntry
+      }
       exit_appointment_queue: {
         Args: { p_appointment_id: string; p_status: 'cancelled' | 'no_show'; p_reason: string }
         Returns: Appointment
@@ -109,6 +113,13 @@ export const supabase: SupabaseClient<Database> | null = isConfigured()
   : null
 
 export type { SupabaseClient }
+
+// A bounded RPC schema keeps this workflow typed without changing legacy table typing.
+type DentalCorrectionDatabase = { public: { Tables: Record<string, never>; Views: Record<string, never>; Functions: Pick<Database['public']['Functions'], 'correct_dental_chart_entry'> } }
+export function correctDentalChartEntry(args: Database['public']['Functions']['correct_dental_chart_entry']['Args']) {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  return (supabase as unknown as SupabaseClient<DentalCorrectionDatabase>).rpc('correct_dental_chart_entry', args)
+}
 
 export function isConfigured(): boolean {
   return env.SUPABASE_URL !== null && env.SUPABASE_PUBLISHABLE_KEY !== null

@@ -1,23 +1,25 @@
 import { useState } from 'react'
 
 export type SoapSmileTheme = 'modern-light' | 'dark-tech'
-export const soapSmileThemeStorageKey = 'soapsmile.workspace-theme'
+export const soapSmileThemeStorageKey = (userId: string) => `soapsmile.workspace-theme:${userId}`
 
-export function readSoapSmileTheme(): SoapSmileTheme {
+export function readSoapSmileTheme(userId: string): SoapSmileTheme {
   try {
-    return window.localStorage.getItem(soapSmileThemeStorageKey) === 'dark-tech' ? 'dark-tech' : 'modern-light'
+    return window.localStorage.getItem(soapSmileThemeStorageKey(userId)) === 'dark-tech' ? 'dark-tech' : 'modern-light'
   } catch {
     return 'modern-light'
   }
 }
 
-export function useSoapSmileTheme() {
-  const [theme, setTheme] = useState<SoapSmileTheme>(readSoapSmileTheme)
+export function useSoapSmileTheme(userId: string) {
+  const [preference, setPreference] = useState(() => ({ userId, theme: readSoapSmileTheme(userId) }))
+  // Resolve the current identity during render, never displaying another user's state.
+  const theme = preference.userId === userId ? preference.theme : readSoapSmileTheme(userId)
 
   function changeTheme(nextTheme: SoapSmileTheme) {
-    setTheme(nextTheme)
+    setPreference({ userId, theme: nextTheme })
     try {
-      window.localStorage.setItem(soapSmileThemeStorageKey, nextTheme)
+      window.localStorage.setItem(soapSmileThemeStorageKey(userId), nextTheme)
     } catch {
       // The presentation preference still works when browser storage is unavailable.
     }
