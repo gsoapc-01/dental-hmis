@@ -617,7 +617,7 @@ function DashboardView({ clinicId, clinicName, timezone, role, userId, onOpenPat
   }, [canViewFinance, clinicId, role, today, timezone, userId])
 
   const appointments = data?.appointments ?? []
-  const waitingAppointments = appointments.filter((appointment) => appointment.status === 'waiting')
+  const waitingAppointments = appointments.filter((appointment) => appointment.status === 'arrived' || appointment.status === 'waiting')
   const inProgressAppointments = appointments.filter((appointment) => appointment.status === 'in_progress')
   const completedAppointments = appointments.filter((appointment) => appointment.status === 'completed')
   const currencyTotals = (totals: Record<string, number>) => Object.entries(totals).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <span key={currency}>{formatMoney(amount, currency)}</span>)
@@ -1484,6 +1484,7 @@ function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onV
 }
 
 type AppointmentView = 'upcoming' | 'today' | 'waiting'
+type QueueExitStatus = 'cancelled' | 'no_show'
 
 function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId: string; userId: string; role: UserRole; onOpenPatients: () => void }) {
   const [appointments, setAppointments] = useState<Appointment[]>([])
@@ -1494,6 +1495,8 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
   const [error, setError] = useState<string | null>(null)
   const [transitionError, setTransitionError] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<AppointmentView>('upcoming')
+  const [queueExit, setQueueExit] = useState<{ appointment: Appointment; status: QueueExitStatus } | null>(null)
+  const [queueSuccess, setQueueSuccess] = useState<string | null>(null)
   const [transitioningId, setTransitioningId] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [activeConsultation, setActiveConsultation] = useState<{ appointment: Appointment; patient: PatientAppointmentSummary; visit: Visit } | null>(null)
@@ -1513,7 +1516,7 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
       const today = new Date().toISOString().slice(0, 10)
       const [appointmentResult, waitingResult, patientResult] = await Promise.all([
         supabase.from('appointments').select('*').eq('clinic_id', clinicId).gte('appointment_date', today).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
-        supabase.from('appointments').select('*').eq('clinic_id', clinicId).eq('status', 'waiting').order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
+        supabase.from('appointments').select('*').eq('clinic_id', clinicId).in('status', ['arrived', 'waiting']).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
         supabase.from('patients').select('id, patient_number, first_name, middle_name, last_name').eq('clinic_id', clinicId),
       ])
 
@@ -1596,6 +1599,20 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
     setRefreshVersion((version) => version + 1)
   }
 
+  async function confirmQueueExit(reason: string) {
+    if (!supabase || !queueExit) throw new Error('The appointment is unavailable. Refresh and try again.')
+    const { data, error: exitError } = await supabase.rpc('exit_appointment_queue', {
+      p_appointment_id: queueExit.appointment.id, p_status: queueExit.status, p_reason: reason,
+    } as never)
+    if (exitError || !data) throw new Error(exitError?.code === 'P0001' ? exitError.message : 'We could not update the appointment. Refresh and try again.')
+    const updated = data as Appointment
+    setAppointments((current) => current.map((item) => item.id === updated.id ? updated : item))
+    setWaitingAppointments((current) => current.filter((item) => item.id !== updated.id))
+    setQueueSuccess(updated.status === 'cancelled' ? 'Appointment cancelled and removed from the active queue.' : 'Appointment marked no-show / left and removed from the active queue.')
+    setQueueExit(null)
+    setRefreshVersion((version) => version + 1)
+  }
+
   function finishConsultation() {
     setActiveConsultation(null)
     setRefreshVersion((version) => version + 1)
@@ -1608,20 +1625,64 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
       {loading && <SoapSmileLoadingState>Loading upcoming appointments...</SoapSmileLoadingState>}
       {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
       {!loading && !error && transitionError && <SoapSmileFeedback tone="error">{transitionError}</SoapSmileFeedback>}
+      {queueSuccess && <SoapSmileFeedback tone="success">{queueSuccess}</SoapSmileFeedback>}
+      {queueExit && <QueueExitDialog appointment={queueExit.appointment} patient={patients[queueExit.appointment.patient_id]} status={queueExit.status} onClose={() => setQueueExit(null)} onConfirm={confirmQueueExit} />}
       {activeConsultation && <><ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} /><DentalChart clinicId={clinicId} visit={activeConsultation.visit} userId={userId} canCreate defaultOpen /></>}
       {!loading && !error && !hasAppointments && <SoapSmileEmptyState icon="appointments"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></SoapSmileEmptyState>}
       {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <SoapSmileEmptyState icon="appointments"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></SoapSmileEmptyState>}
-      {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list" tabIndex={0} role="region" aria-label="Appointment list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} transitioning={transitioningId === appointment.id} />)}</div>}
+      {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list" tabIndex={0} role="region" aria-label="Appointment list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} onQueueExit={(appointment, status) => { setQueueSuccess(null); setQueueExit({ appointment, status }) }} transitioning={transitioningId === appointment.id} />)}</div>}
     </div>
   )
 }
 
-function AppointmentCard({ appointment, patient, doctorName, role, userId, onTransition, onStartConsultation, transitioning }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string; role: UserRole; userId: string; onTransition: (appointment: Appointment, nextStatus: 'arrived' | 'waiting') => void; onStartConsultation: (appointment: Appointment) => void; transitioning: boolean }) {
+function QueueExitDialog({ appointment, patient, status, onClose, onConfirm }: { appointment: Appointment; patient?: PatientAppointmentSummary; status: QueueExitStatus; onClose: () => void; onConfirm: (reason: string) => Promise<void> }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { dialog.current?.showModal() }, [])
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!reason.trim()) { setError('Enter a short reason.'); return }
+    setBusy(true)
+    setError(null)
+    try { await onConfirm(reason.trim()) }
+    catch (failure) { setError(failure instanceof Error ? failure.message : 'We could not update the appointment.') }
+    finally { setBusy(false) }
+  }
+  return <dialog ref={dialog} className="queue-exit-dialog" aria-labelledby="queue-exit-title" onCancel={(event) => { event.preventDefault(); if (!busy) onClose() }}>
+    <form onSubmit={submit}>
+      <h2 id="queue-exit-title">{status === 'cancelled' ? 'Cancel appointment' : 'Mark no-show / left'}</h2>
+      {patient && <p><strong>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</strong> · File {patient.patient_number}</p>}
+      <p>{formatDate(appointment.appointment_date)} · {formatTime(appointment.start_time)}. This removes the appointment from the active queue and preserves its history.</p>
+      <label>Reason<textarea autoFocus required maxLength={500} rows={3} value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} placeholder="Brief operational reason; avoid clinical details" /></label>
+      {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+      <div className="form-actions"><button type="button" className="button-secondary" onClick={onClose} disabled={busy}>Close</button><button type="submit" disabled={busy || !reason.trim()}>{busy ? 'Saving...' : 'Confirm'}</button></div>
+    </form>
+  </dialog>
+}
+
+function AppointmentCard({ appointment, patient, doctorName, role, userId, onTransition, onStartConsultation, onQueueExit, transitioning }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string; role: UserRole; userId: string; onTransition: (appointment: Appointment, nextStatus: 'arrived' | 'waiting') => void; onStartConsultation: (appointment: Appointment) => void; onQueueExit: (appointment: Appointment, status: QueueExitStatus) => void; transitioning: boolean }) {
   const canCheckIn = appointment.status === 'scheduled' || appointment.status === 'confirmed'
   const canSendToWaiting = appointment.status === 'arrived'
-  const canStartConsultation = role !== 'receptionist' && appointment.status === 'waiting' && (role === 'admin' || appointment.doctor_id === userId)
-
-  return <article className="appointment-card"><div className="appointment-date-block"><span>{formatDate(appointment.appointment_date)}</span><strong>{formatTime(appointment.start_time)}</strong><small>{formatTime(appointment.end_time)}</small></div><div className="appointment-main"><p className="appointment-patient">{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</p><p className="appointment-file">File {patient?.patient_number ?? '-'}</p>{appointment.service && <p className="appointment-reason">{appointment.service}</p>}</div><div className="appointment-meta"><p>{doctorName ?? 'Doctor unavailable'}</p><span className={`appointment-status status-${appointment.status}`}>{formatStatus(appointment.status)}</span><div className="appointment-actions">{canCheckIn && <button onClick={() => onTransition(appointment, 'arrived')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Check In'}</button>}{canSendToWaiting && <button onClick={() => onTransition(appointment, 'waiting')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Send to Waiting'}</button>}{canStartConsultation && <button onClick={() => onStartConsultation(appointment)} disabled={transitioning || !patient} type="button">{transitioning ? 'Starting...' : 'Start Consultation'}</button>}</div></div></article>
+  const canStartConsultation = appointment.status === 'waiting' && (role === 'admin' || (role === 'doctor' && appointment.doctor_id === userId))
+  const canExitQueue = ['scheduled', 'confirmed', 'arrived', 'waiting'].includes(appointment.status) && (role === 'admin' || role === 'receptionist' || (role === 'doctor' && appointment.doctor_id === userId))
+  function closeMenu(event: React.MouseEvent<HTMLButtonElement>) { event.currentTarget.closest('details')?.removeAttribute('open') }
+  return <article className="appointment-card">
+    <div className="appointment-date-block"><span>{formatDate(appointment.appointment_date)}</span><strong>{formatTime(appointment.start_time)}</strong><small>{formatTime(appointment.end_time)}</small></div>
+    <div className="appointment-main"><p className="appointment-patient">{patient ? [patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ') : 'Patient unavailable'}</p><p className="appointment-file">File {patient?.patient_number ?? '-'}</p>{appointment.service && <p className="appointment-reason">{appointment.service}</p>}</div>
+    <div className="appointment-meta"><p>{doctorName ?? 'Doctor unavailable'}</p><span className={'appointment-status status-' + appointment.status}>{formatStatus(appointment.status)}</span>
+      <div className="appointment-actions">
+        {canCheckIn && <button onClick={() => onTransition(appointment, 'arrived')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Check In'}</button>}
+        {canSendToWaiting && <button onClick={() => onTransition(appointment, 'waiting')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Send to Waiting'}</button>}
+        {canExitQueue && <details className="queue-action-menu"><summary aria-label="Appointment actions">Actions</summary><div>
+          {canStartConsultation && <button type="button" disabled={transitioning || !patient} onClick={(event) => { closeMenu(event); onStartConsultation(appointment) }}>Start Consultation</button>}
+          <button type="button" disabled={transitioning} onClick={(event) => { closeMenu(event); onQueueExit(appointment, 'cancelled') }}>Cancel appointment</button>
+          <button type="button" disabled={transitioning} onClick={(event) => { closeMenu(event); onQueueExit(appointment, 'no_show') }}>No-show / Left</button>
+        </div></details>}
+      </div>
+    </div>
+  </article>
 }
 
 type ConsultationFormValues = {

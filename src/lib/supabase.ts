@@ -36,6 +36,10 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      exit_appointment_queue: {
+        Args: { p_appointment_id: string; p_status: 'cancelled' | 'no_show'; p_reason: string }
+        Returns: Appointment
+      }
       bootstrap_clinic: {
         Args: { p_name: string }
         Returns: string

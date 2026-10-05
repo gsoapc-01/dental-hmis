@@ -122,6 +122,9 @@ export interface Appointment {
   service?: string | null
   notes?: string | null
   status: AppointmentStatus
+  queue_exit_reason?: string | null
+  queue_exited_by?: string | null
+  queue_exited_at?: string | null
   created_at: string
   updated_at: string
 }
