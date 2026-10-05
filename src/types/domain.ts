@@ -111,6 +111,7 @@ export interface Patient {
 }
 
 export interface Appointment {
+  encounter_context_id?: string | null
   id: string
   clinic_id: string
   patient_id: string
@@ -127,6 +128,15 @@ export interface Appointment {
   queue_exited_at?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface EncounterContext {
+  id: string
+  clinic_id: string
+  patient_id: string
+  created_by: string
+  created_at: string
+  state: 'pending' | 'booked'
 }
 
 export interface Visit {

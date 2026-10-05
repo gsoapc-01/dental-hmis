@@ -7,6 +7,7 @@ import type {
   Clinic,
   ClinicMembership,
   DentalChartEntry,
+  EncounterContext,
   Invoice,
   Investigation,
   Patient,
@@ -21,11 +22,12 @@ import { env } from '../config/env'
 export interface Database {
   public: {
     Tables: {
+      encounter_contexts: { Row: EncounterContext; Insert: never; Update: never }
       clinics: { Row: Clinic; Insert: Omit<Clinic, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Clinic> }
       profiles: { Row: Profile; Insert: Omit<Profile, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Profile> }
       clinic_memberships: { Row: ClinicMembership; Insert: Omit<ClinicMembership, 'created_at' | 'is_active'> & { is_active?: boolean }; Update: Partial<ClinicMembership> }
       patients: { Row: Patient; Insert: Omit<Patient, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Patient> }
-      appointments: { Row: Appointment; Insert: Omit<Appointment, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Appointment> }
+      appointments: { Row: Appointment; Insert: never; Update: Partial<Appointment> }
       visits: { Row: Visit; Insert: Omit<Visit, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Visit> }
       dental_chart_entries: { Row: DentalChartEntry; Insert: Omit<DentalChartEntry, 'id' | 'created_at' | 'supersedes_entry_id' | 'correction_reason'>; Update: never }
       prescriptions: { Row: Prescription; Insert: Omit<Prescription, 'id' | 'created_at'>; Update: Partial<Prescription> }
@@ -36,6 +38,14 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      start_encounter_context: {
+        Args: { p_clinic_id: string; p_patient_id: string }
+        Returns: EncounterContext
+      }
+      book_encounter_appointment: {
+        Args: { p_encounter_id: string; p_patient_id: string; p_doctor_id: string; p_appointment_date: string; p_start_time: string; p_end_time: string; p_service: string | null; p_notes: string | null }
+        Returns: Appointment
+      }
       correct_dental_chart_entry: {
         Args: { p_entry_id: string; p_surfaces: string[]; p_finding: string | null; p_procedure_text: string | null; p_notes: string | null; p_reason: string }
         Returns: DentalChartEntry
@@ -119,6 +129,16 @@ type DentalCorrectionDatabase = { public: { Tables: Record<string, never>; Views
 export function correctDentalChartEntry(args: Database['public']['Functions']['correct_dental_chart_entry']['Args']) {
   if (!supabase) throw new Error('Supabase is not configured.')
   return (supabase as unknown as SupabaseClient<DentalCorrectionDatabase>).rpc('correct_dental_chart_entry', args)
+}
+
+type EncounterWorkflowDatabase = { public: { Tables: Record<string, never>; Views: Record<string, never>; Functions: Pick<Database['public']['Functions'], 'start_encounter_context' | 'book_encounter_appointment'> } }
+export function startEncounterContext(args: Database['public']['Functions']['start_encounter_context']['Args']) {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  return (supabase as unknown as SupabaseClient<EncounterWorkflowDatabase>).rpc('start_encounter_context', args)
+}
+export function bookEncounterAppointment(args: Database['public']['Functions']['book_encounter_appointment']['Args']) {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  return (supabase as unknown as SupabaseClient<EncounterWorkflowDatabase>).rpc('book_encounter_appointment', args)
 }
 
 export function isConfigured(): boolean {
