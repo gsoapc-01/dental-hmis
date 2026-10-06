@@ -14,6 +14,7 @@ import type {
   Payment,
   Prescription,
   Profile,
+  StandaloneVisitLifecycle,
   UserRole,
   Visit,
 } from '../types/domain'
@@ -22,6 +23,7 @@ import { env } from '../config/env'
 export interface Database {
   public: {
     Tables: {
+      standalone_visit_lifecycle: { Row: StandaloneVisitLifecycle; Insert: never; Update: never }
       encounter_contexts: { Row: EncounterContext; Insert: never; Update: never }
       clinics: { Row: Clinic; Insert: Omit<Clinic, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Clinic> }
       profiles: { Row: Profile; Insert: Omit<Profile, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Profile> }
@@ -38,6 +40,7 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      finalize_standalone_visit: { Args: { p_visit_id: string }; Returns: StandaloneVisitLifecycle }
       start_encounter_context: {
         Args: { p_clinic_id: string; p_patient_id: string }
         Returns: EncounterContext

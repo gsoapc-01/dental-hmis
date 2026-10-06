@@ -11,7 +11,7 @@ import { SoapSmileBillingPatientList, SoapSmileBrand, SoapSmileCompanion, SoapSm
 import { SoapSmileThemePicker, SoapSmileThemeToggle } from './SoapSmileTheme'
 import { useSoapSmileTheme } from './useSoapSmileTheme'
 import type { SoapSmileTheme } from './useSoapSmileTheme'
-import type { Appointment, AppointmentStatus, AuditLog, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, EncounterContext, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, UserRole, Visit } from './types/domain'
+import type { Appointment, AppointmentStatus, AuditLog, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, EncounterContext, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, StandaloneVisitLifecycle, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 const clinicCurrencies = ['TZS', 'KES', 'UGX', 'USD'] as const
@@ -25,7 +25,7 @@ type MembershipContext = {
 
 type PrintableDocument =
   | { type: 'receipt'; clinic: Clinic; patient: Patient; invoice: Invoice; payment: Payment }
-  | { type: 'visit'; clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }
+  | { type: 'visit'; standaloneState?: 'saved' | 'finalized' | 'unknown'; clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }
   | { type: 'report'; clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string }
 
 type ViewReceipt = (patient: Patient, invoice: Invoice, payment: Payment) => void
@@ -259,8 +259,17 @@ function ClinicShell({ context }: { context: MembershipContext }) {
     setPrintableDocument({ type: 'receipt', clinic, patient, invoice, payment })
   }
 
-  function printVisitSummary(patient: Patient, visit: Visit, clinicianName: string, prescriptions: Prescription[], investigations: Investigation[]) {
-    setPrintableDocument({ type: 'visit', clinic, patient, visit, clinicianName, prescriptions, investigations })
+  async function printVisitSummary(patient: Patient, visit: Visit, clinicianName: string, prescriptions: Prescription[], investigations: Investigation[]) {
+    let standaloneState: 'saved' | 'finalized' | 'unknown' | undefined
+    if (!visit.appointment_id) {
+      standaloneState = 'unknown'
+      if (supabase) {
+        const result = await supabase.from('standalone_visit_lifecycle').select('state').eq('clinic_id', clinic.id).eq('visit_id', visit.id).single()
+        const row = result.data as Pick<StandaloneVisitLifecycle, 'state'> | null
+        if (!result.error && row) standaloneState = row.state
+      }
+    }
+    setPrintableDocument({ type: 'visit', clinic, patient, visit, clinicianName, prescriptions, investigations, standaloneState })
   }
 
   function printReport(data: ReportsData, startDate: string, endDate: string) {
@@ -391,6 +400,7 @@ function auditDetailText(metadata: unknown) {
 
 function auditActionSentence(event: AuditLog) {
   if (event.action === 'corrected' && event.table_name === 'dental_chart_entries') return 'corrected an odontogram entry'
+  if (event.action === 'finalized' && event.table_name === 'standalone_visit_lifecycle') return 'finalized a standalone visit'
   if (event.action === 'currency_changed') return 'changed clinic currency'
   if (event.action === 'status_changed') return 'changed appointment status'
   if (event.action === 'consultation_updated') return 'updated a consultation'
@@ -2561,16 +2571,46 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
 }
 
 function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary }) {
+  const [lifecycle, setLifecycle] = useState<StandaloneVisitLifecycle | null>(null)
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null)
+  const [finalizing, setFinalizing] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      if (visit.appointment_id || !supabase) return
+      const result = await supabase.from('standalone_visit_lifecycle').select('*').eq('clinic_id', clinicId).eq('visit_id', visit.id).single()
+      if (cancelled) return
+      if (result.error) setLifecycleError('Standalone lifecycle could not be verified. Refresh the patient file.')
+      else { setLifecycle(result.data as StandaloneVisitLifecycle); setLifecycleError(null) }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [clinicId, visit.id, visit.appointment_id])
+  async function finalizeVisit() {
+    if (!supabase || finalizing) return
+    setFinalizing(true)
+    setLifecycleError(null)
+    try {
+      const result = await supabase.rpc('finalize_standalone_visit', { p_visit_id: visit.id } as never)
+      if (result.error) throw result.error
+      setLifecycle(result.data as StandaloneVisitLifecycle)
+    } catch { setLifecycleError('Finalization could not be confirmed. Refresh the patient file before retrying.') }
+    finally { setFinalizing(false) }
+  }
+  const standaloneSaved = !visit.appointment_id && lifecycle?.state === 'saved'
+  const standaloneFinalized = !visit.appointment_id && lifecycle?.state === 'finalized'
+  const canFinalize = standaloneSaved && (role === 'admin' || (role === 'doctor' && visit.doctor_id === userId))
   const canViewDentalChart = (role === 'admin' || role === 'doctor') && Boolean(userId)
   const canAddDentalEntries = role === 'admin' || (role === 'doctor' && visit.doctor_id === userId)
 
   return (
     <article className={`visit-card${isLatest ? ' latest' : ''}`}>
-      <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Recorded by {clinicianLabel}</p></div><div className="visit-card-actions">{isLatest && <span className="latest-badge">Latest</span>}{onPrintVisitSummary && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianLabel, prescriptions, investigations)} type="button">Print Visit Summary</button>}</div></div>
+      <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Clinical author / assigned clinician: {clinicianLabel}</p></div><div className="visit-card-actions">{isLatest && <span className="latest-badge">Latest</span>}{onPrintVisitSummary && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianLabel, prescriptions, investigations)} type="button">Print Visit Summary</button>}</div></div>
       <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
+      {!visit.appointment_id && <div className="form-actions"><span>{lifecycle ? lifecycle.state === 'saved' ? 'Saved — unfinished' : 'Finalized' : 'Verifying standalone lifecycle...'}</span>{lifecycle?.legacy_baseline && <span>Historical finalization actor/time unknown</span>}{canFinalize && <button type="button" disabled={finalizing} onClick={() => void finalizeVisit()}>{finalizing ? 'Finalizing...' : 'Finalize standalone visit'}</button>}{lifecycleError && <SoapSmileFeedback tone="error">{lifecycleError}</SoapSmileFeedback>}</div>}
       <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
-      {canViewDentalChart && userId && <DentalChart role={role} clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && visit.appointment_id === null} />}
-      {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <SoapSmileEmptyState><p>No invoice for this visit.</p></SoapSmileEmptyState> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
+      {canViewDentalChart && userId && <DentalChart role={role} clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && standaloneSaved && !finalizing} />}
+      {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && (Boolean(visit.appointment_id) || standaloneFinalized) && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <SoapSmileEmptyState><p>No invoice for this visit.</p></SoapSmileEmptyState> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && (Boolean(visit.appointment_id) || standaloneFinalized) && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
     </article>
   )
 }
@@ -2647,7 +2687,7 @@ function PrintableDocumentPreview({ document, onClose }: { document: PrintableDo
     {document.type === 'receipt'
       ? <PaymentReceiptDocument clinic={document.clinic} patient={document.patient} invoice={document.invoice} payment={document.payment} />
       : document.type === 'visit'
-        ? <VisitSummaryDocument clinic={document.clinic} patient={document.patient} visit={document.visit} clinicianName={document.clinicianName} prescriptions={document.prescriptions} investigations={document.investigations} />
+        ? <VisitSummaryDocument clinic={document.clinic} patient={document.patient} visit={document.visit} clinicianName={document.clinicianName} prescriptions={document.prescriptions} investigations={document.investigations} standaloneState={document.standaloneState} />
         : <ReportPrintDocument clinic={document.clinic} data={document.data} startDate={document.startDate} endDate={document.endDate} generatedAt={document.generatedAt} />}
   </div>
 }
@@ -2753,7 +2793,7 @@ function PrintableClinicalField({ label, value }: { label: string; value: string
   return <section className="print-clinical-field"><h2>{label}</h2><p>{content}</p></section>
 }
 
-function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescriptions, investigations }: { clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }) {
+function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescriptions, investigations, standaloneState }: { clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[]; standaloneState?: 'saved' | 'finalized' | 'unknown' }) {
   const demographicDetails = [
     patient.gender,
     patient.date_of_birth ? `Date of birth: ${formatDate(patient.date_of_birth)}` : null,
@@ -2762,10 +2802,10 @@ function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescript
 
   return <article className="print-document print-visit-summary">
     <PrintableClinicHeader clinic={clinic} />
-    <div className="print-document-heading"><div><p>Clinical record</p><h1>CLINICAL VISIT SUMMARY</h1></div></div>
+    <div className="print-document-heading"><div><p>Clinical record</p><h1>CLINICAL VISIT SUMMARY</h1>{!visit.appointment_id && <p>{standaloneState === 'saved' ? 'Saved — unfinished' : standaloneState === 'finalized' ? 'Finalized' : 'Standalone finalization status unverified'}</p>}</div></div>
     <div className="print-metadata-grid">
       <div><span>Patient</span><strong>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</strong><small>Patient number {patient.patient_number}</small>{demographicDetails.length > 0 && <small>{demographicDetails.join(' · ')}</small>}</div>
-      <div><span>Visit date</span><strong>{formatDateTime(visit.visit_date)}</strong><small>Treating doctor: {clinicianName}</small></div>
+      <div><span>Visit date</span><strong>{formatDateTime(visit.visit_date)}</strong><small>Clinical author / assigned clinician: {clinicianName}</small></div>
     </div>
     <PrintableClinicalField label="Chief complaint" value={visit.chief_complaint} />
     <PrintableClinicalField label="History of present illness" value={visit.hpi} />
@@ -2852,6 +2892,7 @@ function OdontogramWorkspace({ clinicId, userId, role }: { clinicId: string; use
 function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: string; patient: Patient; userId: string; role: UserRole }) {
   const [visits, setVisits] = useState<Visit[]>([])
   const [statuses, setStatuses] = useState<Record<string, AppointmentStatus>>({})
+  const [lifecycles, setLifecycles] = useState<Record<string, StandaloneVisitLifecycle>>({})
   const [visitId, setVisitId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -2879,11 +2920,20 @@ function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: stri
           if (result.error) throw result.error
           for (const row of (result.data ?? []) as Array<Pick<Appointment, 'id' | 'status'>>) appointmentStatuses[row.id] = row.status
         }
-        const canRecord = (row: Visit) => (role === 'admin' || row.doctor_id === userId) && (!row.appointment_id || appointmentStatuses[row.appointment_id] === 'in_progress')
+        const lifecycleRows: StandaloneVisitLifecycle[] = []
+        const standaloneIds = rows.filter((row) => !row.appointment_id).map((row) => row.id)
+        for (let start = 0; start < standaloneIds.length; start += 100) {
+          const result = await supabase.from('standalone_visit_lifecycle').select('*').eq('clinic_id', clinicId).in('visit_id', standaloneIds.slice(start, start + 100))
+          if (result.error) throw result.error
+          lifecycleRows.push(...(result.data ?? []) as StandaloneVisitLifecycle[])
+        }
+        const lifecycleMap = Object.fromEntries(lifecycleRows.map((row) => [row.visit_id, row]))
+        const canRecord = (row: Visit) => (role === 'admin' || row.doctor_id === userId) && (row.appointment_id ? appointmentStatuses[row.appointment_id] === 'in_progress' : lifecycleMap[row.id]?.state === 'saved')
         const preferred = rows.find((row) => row.appointment_id && canRecord(row)) ?? rows.find(canRecord) ?? rows[0]
         if (cancelled) return
         setVisits(rows)
         setStatuses(appointmentStatuses)
+        setLifecycles(lifecycleMap)
         setVisitId(preferred?.id ?? '')
       } catch { if (!cancelled) { setVisits([]); setError('We could not verify clinical visit context. Refresh and try again.') } }
       finally { if (!cancelled) setLoading(false) }
@@ -2892,10 +2942,10 @@ function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: stri
     return () => { cancelled = true }
   }, [clinicId, patient.id, role, userId, refresh])
   const visit = visits.find((row) => row.id === visitId) ?? null
-  const canCreate = Boolean(visit && (role === 'admin' || visit.doctor_id === userId) && (!visit.appointment_id || statuses[visit.appointment_id] === 'in_progress'))
+  const canCreate = Boolean(visit && (role === 'admin' || visit.doctor_id === userId) && (visit.appointment_id ? statuses[visit.appointment_id] === 'in_progress' : lifecycles[visit.id]?.state === 'saved'))
   return <><div className="odontogram-patient-identity"><div><p className="eyebrow">Patient dental workspace</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><strong>File {patient.patient_number}</strong></div><button type="button" className="button-secondary" disabled={loading} onClick={() => setRefresh((value) => value + 1)}>Refresh visit context</button></div>
     {loading && <SoapSmileLoadingState>Verifying clinical visits...</SoapSmileLoadingState>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-    {!loading && !error && <>{visits.length > 0 && <label className="odontogram-visit-picker">Recording / review visit<select value={visitId} onChange={(event) => setVisitId(event.target.value)}>{visits.map((row) => <option key={row.id} value={row.id}>{formatDateTime(row.visit_date)} - {row.appointment_id ? statuses[row.appointment_id]?.replaceAll('_', ' ') || 'Review only' : 'Standalone clinical visit'}</option>)}</select></label>}
+    {!loading && !error && <>{visits.length > 0 && <label className="odontogram-visit-picker">Recording / review visit<select value={visitId} onChange={(event) => setVisitId(event.target.value)}>{visits.map((row) => <option key={row.id} value={row.id}>{formatDateTime(row.visit_date)} - {row.appointment_id ? statuses[row.appointment_id]?.replaceAll('_', ' ') || 'Review only' : lifecycles[row.id]?.state === 'saved' ? 'Saved — unfinished' : lifecycles[row.id]?.state === 'finalized' ? 'Finalized' : 'Review only'}</option>)}</select></label>}
       {!canCreate && <p className="dental-context-note">History is available for review. New recording requires an eligible existing clinical visit or an in-progress consultation with appropriate authorization. No new visit or appointment is created here.</p>}
       <DentalChart key={visitId + ':' + refresh} clinicId={clinicId} patientId={patient.id} visit={visit} userId={userId} role={role} canCreate={canCreate} defaultOpen />
     </>}

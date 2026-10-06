@@ -140,6 +140,7 @@ export interface EncounterContext {
 }
 
 export interface Visit {
+  recorded_by?: string | null
   id: string
   clinic_id: string
   patient_id: string
@@ -159,6 +160,15 @@ export interface Visit {
   updated_at: string
 }
 
+export interface StandaloneVisitLifecycle {
+  clinic_id: string
+  visit_id: string
+  state: 'saved' | 'finalized'
+  legacy_baseline: boolean
+  finalized_by: string | null
+  finalized_at: string | null
+}
+
 export interface DentalChartEntry {
   supersedes_entry_id?: string | null
   correction_reason?: string | null
@@ -176,6 +186,7 @@ export interface DentalChartEntry {
 }
 
 export interface Prescription {
+  recorded_by?: string | null
   id: string
   clinic_id: string
   patient_id: string
@@ -193,6 +204,7 @@ export interface Prescription {
 }
 
 export interface Investigation {
+  recorded_by?: string | null
   id: string
   clinic_id: string
   patient_id: string
