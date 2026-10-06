@@ -77,6 +77,7 @@ export interface ClinicMembership {
 }
 
 export interface Patient {
+  clinical_profile_version: number
   id: string
   clinic_id: string
   patient_number: string
@@ -108,6 +109,20 @@ export interface Patient {
   pregnancy_status?: string | null
   created_at: string
   updated_at: string
+}
+
+export type ClinicalProfileField = 'allergies' | 'current_medications' | 'medical_history' | 'previous_surgery' | 'family_history' | 'dental_history' | 'relevant_habits' | 'pregnancy_status'
+
+export interface PatientClinicalProfileVersion extends Record<ClinicalProfileField, string | null> {
+  id: string
+  clinic_id: string
+  patient_id: string
+  version_number: number
+  recorded_at: string
+  recorded_by: string | null
+  actor_display_name: string | null
+  origin: 'legacy_baseline' | 'created' | 'updated'
+  changed_fields: ClinicalProfileField[]
 }
 
 export interface Appointment {

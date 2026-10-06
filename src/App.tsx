@@ -2,16 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 
 import './App.css'
+import { VisitProcedures, ProcedureCatalogSettings, ProcedureActivitySummary } from './Procedures'
+import { procedureClient } from './lib/procedures'
+import type { ProcedureActivity } from './lib/procedures'
 import './SoapSmileWorkstation.css'
 import './SoapSmileThemes.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
-import { bookEncounterAppointment, correctDentalChartEntry, startEncounterContext, supabase } from './lib/supabase'
+import { bookEncounterAppointment, correctDentalChartEntry, startEncounterContext, supabase, updatePatientClinicalProfile } from './lib/supabase'
 import { inspectDentalEntryChains } from './lib/odontogram'
 import { SoapSmileBillingPatientList, SoapSmileBrand, SoapSmileCompanion, SoapSmileCompanionDock, SoapSmileEmptyState, SoapSmileFeedback, SoapSmileIcon, SoapSmileInvoiceSummary, SoapSmileLoader, SoapSmileLoadingState, SoapSmileLoginEnvironment, SoapSmileOperationsCore, SoapSmileTooth } from './SoapSmilePresentation'
 import { SoapSmileThemePicker, SoapSmileThemeToggle } from './SoapSmileTheme'
 import { useSoapSmileTheme } from './useSoapSmileTheme'
 import type { SoapSmileTheme } from './useSoapSmileTheme'
-import type { Appointment, AppointmentStatus, AuditLog, Clinic, ClinicMembership, DentalChartEntry, DentalSurface, EncounterContext, Investigation, Invoice, Patient, Payment, PaymentMethod, Prescription, StandaloneVisitLifecycle, UserRole, Visit } from './types/domain'
+import type { Appointment, AppointmentStatus, AuditLog, Clinic, ClinicMembership, ClinicalProfileField, DentalChartEntry, DentalSurface, EncounterContext, Investigation, Invoice, Patient, PatientClinicalProfileVersion, Payment, PaymentMethod, Prescription, StandaloneVisitLifecycle, UserRole, Visit } from './types/domain'
 
 type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated' | 'error'
 const clinicCurrencies = ['TZS', 'KES', 'UGX', 'USD'] as const
@@ -26,11 +29,42 @@ type MembershipContext = {
 type PrintableDocument =
   | { type: 'receipt'; clinic: Clinic; patient: Patient; invoice: Invoice; payment: Payment }
   | { type: 'visit'; standaloneState?: 'saved' | 'finalized' | 'unknown'; clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }
-  | { type: 'report'; clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string }
+  | { type: 'report'; view: ReportView; clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string }
 
 type ViewReceipt = (patient: Patient, invoice: Invoice, payment: Payment) => void
 type PrintVisitSummary = (patient: Patient, visit: Visit, clinicianName: string, prescriptions: Prescription[], investigations: Investigation[]) => void
-type PrintReport = (data: ReportsData, startDate: string, endDate: string) => void
+type ReportView = 'overview' | 'procedures'
+type PrintReport = (data: ReportsData, startDate: string, endDate: string, view: ReportView) => void
+
+// Navigation discards UI drafts only. Committed records remain server-protected.
+function confirmWorkspaceLeave(ignoreNotes = false) {
+  return window.dispatchEvent(new CustomEvent('soapsmile-before-navigation', { cancelable: true, detail: { confirmed: false, ignoreNotes } }))
+}
+
+function useUnsavedWorkspace(dirty: boolean, busy = false, isConsultationNotes = false) {
+  useEffect(() => {
+    function beforeNavigation(event: Event) {
+      const navigation = event as CustomEvent<{ confirmed: boolean; ignoreNotes: boolean }>
+      if (navigation.defaultPrevented) return
+      if (busy) { window.alert('Please wait for the current save to finish.'); event.preventDefault(); return }
+      if (isConsultationNotes && navigation.detail.ignoreNotes) return
+      if (!dirty || navigation.detail.confirmed) return
+      if (window.confirm('Leave this workspace and discard unsaved changes? Saved records will remain unchanged.')) navigation.detail.confirmed = true
+      else event.preventDefault()
+    }
+    function beforeUnload(event: BeforeUnloadEvent) {
+      if (!dirty && !busy) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('soapsmile-before-navigation', beforeNavigation)
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => {
+      window.removeEventListener('soapsmile-before-navigation', beforeNavigation)
+      window.removeEventListener('beforeunload', beforeUnload)
+    }
+  }, [dirty, busy, isConsultationNotes])
+}
 
 function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('loading')
@@ -239,6 +273,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [activeModule, setActiveModule] = useState('Dashboard')
   const [patientToOpen, setPatientToOpen] = useState<Patient | null>(null)
+  const [appointmentToOpen, setAppointmentToOpen] = useState<Appointment | null>(null)
   const [printableDocument, setPrintableDocument] = useState<PrintableDocument | null>(null)
   const [clinic, setClinic] = useState(context.clinic)
   const canViewFinance = context.membership.role === 'admin' || context.membership.role === 'receptionist'
@@ -246,13 +281,24 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   const canViewOdontogram = context.membership.is_active && ['admin', 'doctor'].includes(context.membership.role)
 
   function navigateToModule(module: string) {
+    if (!confirmWorkspaceLeave()) return
+    setAppointmentToOpen(null)
     setPatientToOpen(null)
     setActiveModule(module)
   }
 
   function openPatientHistory(patient: Patient) {
+    if (!confirmWorkspaceLeave()) return
+    setAppointmentToOpen(null)
     setPatientToOpen(patient)
     setActiveModule('Patients')
+  }
+
+  function openAppointment(appointment: Appointment) {
+    if (!confirmWorkspaceLeave()) return
+    setPatientToOpen(null)
+    setAppointmentToOpen(appointment)
+    setActiveModule('Appointments')
   }
 
   function viewReceipt(patient: Patient, invoice: Invoice, payment: Payment) {
@@ -272,11 +318,12 @@ function ClinicShell({ context }: { context: MembershipContext }) {
     setPrintableDocument({ type: 'visit', clinic, patient, visit, clinicianName, prescriptions, investigations, standaloneState })
   }
 
-  function printReport(data: ReportsData, startDate: string, endDate: string) {
-    setPrintableDocument({ type: 'report', clinic, data, startDate, endDate, generatedAt: new Date().toISOString() })
+  function printReport(data: ReportsData, startDate: string, endDate: string, view: ReportView) {
+    setPrintableDocument({ type: 'report', view, clinic, data, startDate, endDate, generatedAt: new Date().toISOString() })
   }
 
   async function handleLogout() {
+    if (!confirmWorkspaceLeave()) return
     const error = await signOut()
     if (error) setLogoutError('Sign-out failed. Please try again.')
   }
@@ -305,11 +352,13 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">{clinic.name}</p><p className="topbar-title">{activeModule}</p></div><div className="soap-topbar-actions"><SoapSmileThemeToggle theme={theme} onChange={changeTheme} /><div className="topbar-meta"><span className="status-indicator" /><SoapSmileIcon name="shield" />Secure session</div></div></header>
-        {activeModule === 'Odontogram' && canViewOdontogram ? <OdontogramWorkspace clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Appointments' ? <AppointmentsView clinicId={clinic.id} userId={context.user.id} role={context.membership.role} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} onViewPatient={openPatientHistory} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} clinicName={clinic.name} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} theme={theme} onThemeChange={changeTheme} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} onOpenBilling={() => navigateToModule('Billing')} onOpenAppointments={() => navigateToModule('Appointments')} />}
+        {activeModule === 'Odontogram' && canViewOdontogram ? <OdontogramWorkspace clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Appointments' ? <AppointmentsView key={clinic.id} clinicId={clinic.id} timezone={clinic.timezone} initialAppointment={appointmentToOpen} onViewPatient={openPatientHistory} userId={context.user.id} role={context.membership.role} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} onViewPatient={openPatientHistory} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewAppointment={openAppointment} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} clinicName={clinic.name} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} theme={theme} onThemeChange={changeTheme} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} onOpenBilling={() => navigateToModule('Billing')} onOpenAppointments={() => navigateToModule('Appointments')} />}
         <SoapSmileCompanionDock />
       </section>
     </main>
-    {printableDocument && <PrintableDocumentPreview document={printableDocument} onClose={() => setPrintableDocument(null)} />}
+    {printableDocument?.type === 'report'
+      ? <ReportPrintHost document={printableDocument} onDone={setPrintableDocument} />
+      : printableDocument && <PrintableDocumentPreview document={printableDocument} onClose={() => setPrintableDocument(null)} />}
   </>
 }
 
@@ -352,6 +401,7 @@ function ClinicSettingsView({ clinic, onUpdated, theme, onThemeChange }: { clini
   return <div className="clinic-settings-page">
     <div className="page-heading"><div><p className="eyebrow">Clinic management</p><h1>Settings</h1><p className="panel-copy">Manage settings for {clinic.name}.</p></div></div>
     <SoapSmileThemePicker theme={theme} onChange={onThemeChange} />
+    <ProcedureCatalogSettings clinicId={clinic.id} />
     <section className="registration-panel clinic-currency-panel">
       <div className="registration-heading"><p className="eyebrow">Financial settings</p><h2>Operating currency</h2><p className="panel-copy">Currency changes apply to future invoices. Existing invoices keep their recorded currency.</p></div>
       <form className="clinic-currency-form" onSubmit={(event) => void handleSubmit(event)}>
@@ -372,6 +422,7 @@ function auditDetailText(metadata: unknown) {
     const fields = values.changed_fields.filter((field): field is string => typeof field === 'string')
     if (fields.length > 0) details.push(`Changed: ${fields.map((field) => field.replaceAll('_', ' ')).join(', ')}`)
   }
+  if (typeof values.clinical_profile_version === 'number') details.push(`Clinical profile version ${values.clinical_profile_version}`)
   for (const [oldKey, newKey, label] of [
     ['old_status', 'new_status', 'Status'],
     ['old_role', 'new_role', 'Role'],
@@ -399,6 +450,11 @@ function auditDetailText(metadata: unknown) {
 }
 
 function auditActionSentence(event: AuditLog) {
+  if (event.action === 'procedure_recorded') return 'recorded a performed procedure'
+  if (event.action === 'procedure_corrected') return 'corrected a performed procedure'
+  if (event.action === 'catalog_procedure_created') return 'added a catalog procedure'
+  if (event.action === 'catalog_procedure_activated') return 'activated a catalog procedure'
+  if (event.action === 'catalog_procedure_deactivated') return 'deactivated a catalog procedure'
   if (event.action === 'corrected' && event.table_name === 'dental_chart_entries') return 'corrected an odontogram entry'
   if (event.action === 'finalized' && event.table_name === 'standalone_visit_lifecycle') return 'finalized a standalone visit'
   if (event.action === 'currency_changed') return 'changed clinic currency'
@@ -894,6 +950,7 @@ function StaffManagementView({ clinicId, userId }: { clinicId: string; userId: s
 }
 
 type ReportsData = {
+  procedureActivity: ProcedureActivity
   registrations: number
   appointments: DashboardAppointment[]
   visits: ReportVisit[]
@@ -1061,6 +1118,8 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
   const [data, setData] = useState<ReportsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [view, setView] = useState<ReportView>('overview')
+  const [refreshVersion, setRefreshVersion] = useState(0)
   const effectiveStart = startDate || `${(endDate || today).slice(0, 7)}-01`
   const effectiveEnd = endDate || today
 
@@ -1082,15 +1141,16 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
       setLoading(true)
       setError(null)
       const bounds = getClinicDateBounds(effectiveStart, effectiveEnd, timezone)
-      const [registrationResult, appointmentResult, visitResult, paymentResult, invoiceResult] = await Promise.all([
+      const [registrationResult, appointmentResult, visitResult, paymentResult, invoiceResult, procedureResult] = await Promise.all([
         supabase.from('patients').select('id', { count: 'exact', head: true }).eq('clinic_id', clinicId).gte('created_at', bounds.start).lt('created_at', bounds.end),
         supabase.from('appointments').select('id, patient_id, doctor_id, appointment_date, start_time, end_time, service, status').eq('clinic_id', clinicId).gte('appointment_date', effectiveStart).lte('appointment_date', effectiveEnd).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
         supabase.from('visits').select('id, doctor_id, appointment_id').eq('clinic_id', clinicId).gte('visit_date', bounds.start).lt('visit_date', bounds.end),
         supabase.from('payments').select('id, clinic_id, invoice_id, patient_id, amount, payment_method, payment_date').eq('clinic_id', clinicId).gte('payment_date', bounds.start).lt('payment_date', bounds.end),
         supabase.from('invoices').select('id, currency, status, balance').eq('clinic_id', clinicId).in('status', ['draft', 'partially_paid']).gt('balance', 0),
+        procedureClient!.rpc('procedure_activity_report', { p_clinic_id: clinicId, p_start_date: effectiveStart, p_end_date: effectiveEnd }),
       ])
       if (cancelled) return
-      if (registrationResult.error || appointmentResult.error || visitResult.error || paymentResult.error || invoiceResult.error) {
+      if (registrationResult.error || appointmentResult.error || visitResult.error || paymentResult.error || invoiceResult.error || procedureResult.error || !procedureResult.data) {
         setLoading(false)
         setError('We could not load reports for this date range.')
         return
@@ -1131,6 +1191,7 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
       }
 
       setData({
+        procedureActivity: procedureResult.data!,
         registrations: registrationResult.count ?? 0,
         appointments,
         visits,
@@ -1144,7 +1205,7 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
 
     void loadReports()
     return () => { cancelled = true }
-  }, [clinicId, effectiveEnd, effectiveStart, timezone])
+  }, [clinicId, effectiveEnd, effectiveStart, timezone, refreshVersion])
 
   const appointmentsByStatus = (data?.appointments ?? []).reduce<Record<string, number>>((counts, appointment) => {
     counts[appointment.status] = (counts[appointment.status] ?? 0) + 1
@@ -1153,11 +1214,13 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
   const totals = (values: Record<string, number>) => Object.entries(values).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => <span key={currency}>{formatMoney(amount, currency)}</span>)
 
   return <div className="reports-page">
-    <div className="page-heading"><div><p className="eyebrow">Clinic operations</p><h1>Reports</h1><p className="panel-copy">Period activity and current balances.</p></div>{!loading && !error && data && <button className="primary-action" onClick={() => onPrintReport(data, effectiveStart, effectiveEnd)} type="button">Print Report</button>}</div>
-    <div className="report-date-range"><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>Through<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label></div>
+    <div className="page-heading"><div><p className="eyebrow">Clinic operations</p><h1>Reports</h1><p className="panel-copy">Period activity and current balances.</p></div>{!loading && !error && data && <button className="primary-action" onClick={() => onPrintReport(data, effectiveStart, effectiveEnd, view)} type="button">Print Report</button>}</div>
+    <div className="report-date-range"><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>Through<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><button type="button" className="button-secondary" disabled={loading} onClick={() => setRefreshVersion((value) => value + 1)}>Refresh</button></div>
+    <div className="appointment-tabs report-tabs" role="tablist" aria-label="Report views">{([['overview', 'Overview'], ['procedures', 'Procedure Activity']] as const).map(([key, label]) => <button type="button" key={key} role="tab" id={'report-tab-' + key} aria-controls={'report-view-' + key} aria-selected={view === key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>)}</div>
     {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     {loading && <SoapSmileLoadingState>Loading reports...</SoapSmileLoadingState>}
     {!loading && !error && data && <>
+      {view === 'procedures' ? <div id="report-view-procedures" role="tabpanel" aria-labelledby="report-tab-procedures"><p className="report-period">{formatDate(effectiveStart)} – {formatDate(effectiveEnd)}</p><ProcedureActivitySummary data={data.procedureActivity} /></div> : <section id="report-view-overview" role="tabpanel" aria-labelledby="report-tab-overview"><div className="report-view-heading"><h2>Overview</h2><p className="report-period">{formatDate(effectiveStart)} – {formatDate(effectiveEnd)}</p></div>
       <div className="summary-grid report-metrics">
         <DashboardMetric label="Patient Registrations" value={String(data.registrations)} />
         <DashboardMetric label="Appointments" value={String(data.appointments.length)} />
@@ -1179,6 +1242,7 @@ function ReportsView({ clinicId, timezone, onPrintReport }: { clinicId: string; 
           {data.doctorActivity.length === 0 ? <SoapSmileEmptyState icon="reports"><p>No doctor activity in this period.</p></SoapSmileEmptyState> : <div className="report-value-list">{data.doctorActivity.map((doctor) => <div key={doctor.id}><span>{doctor.label}</span><strong>{doctor.appointments} appointments · {doctor.visits} visits</strong></div>)}</div>}
         </DashboardSection>
       </div>
+      </section>}
     </>}
   </div>
 }
@@ -1497,13 +1561,13 @@ function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onV
   </div>
 }
 
-type AppointmentView = 'upcoming' | 'today' | 'waiting'
+type AppointmentView = 'upcoming' | 'today' | 'waiting' | 'active'
 type QueueExitStatus = 'cancelled' | 'no_show'
 
-function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId: string; userId: string; role: UserRole; onOpenPatients: () => void }) {
+function AppointmentsView({ clinicId, timezone, initialAppointment, onViewPatient, userId, role, onOpenPatients }: { clinicId: string; timezone: string; initialAppointment: Appointment | null; onViewPatient: (patient: Patient) => void; userId: string; role: UserRole; onOpenPatients: () => void }) {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [waitingAppointments, setWaitingAppointments] = useState<Appointment[]>([])
-  const [patients, setPatients] = useState<Record<string, PatientAppointmentSummary>>({})
+  const [patients, setPatients] = useState<Record<string, Patient>>({})
   const [doctors, setDoctors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1513,7 +1577,14 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
   const [queueSuccess, setQueueSuccess] = useState<string | null>(null)
   const [transitioningId, setTransitioningId] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
-  const [activeConsultation, setActiveConsultation] = useState<{ appointment: Appointment; patient: PatientAppointmentSummary; visit: Visit } | null>(null)
+  const [activeConsultation, setActiveConsultation] = useState<{ appointment: Appointment; patient: Patient; visit: Visit } | null>(null)
+
+  const [closedVisit, setClosedVisit] = useState<{ appointment: Appointment; patient: Patient; visit: Visit } | null>(null)
+  const [creatingInvoice, setCreatingInvoice] = useState(false)
+  const [createdInvoice, setCreatedInvoice] = useState<Invoice | null>(null)
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(initialAppointment?.id ?? null)
+  const startLock = useRef(false)
+  useUnsavedWorkspace(false, transitioningId !== null)
 
   useEffect(() => {
     let cancelled = false
@@ -1527,11 +1598,11 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
 
       setLoading(true)
       setTransitionError(null)
-      const today = new Date().toISOString().slice(0, 10)
+      const today = todayInputValue(timezone)
       const [appointmentResult, waitingResult, patientResult] = await Promise.all([
         supabase.from('appointments').select('*').eq('clinic_id', clinicId).gte('appointment_date', today).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
-        supabase.from('appointments').select('*').eq('clinic_id', clinicId).in('status', ['arrived', 'waiting']).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
-        supabase.from('patients').select('id, patient_number, first_name, middle_name, last_name').eq('clinic_id', clinicId),
+        supabase.from('appointments').select('*').eq('clinic_id', clinicId).in('status', ['arrived', 'waiting', 'in_progress']).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
+        supabase.from('patients').select('*').eq('clinic_id', clinicId),
       ])
 
       if (cancelled) return
@@ -1541,7 +1612,7 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
         return
       }
 
-      const patientMap = Object.fromEntries(((patientResult.data ?? []) as PatientAppointmentSummary[]).map((patient) => [patient.id, patient]))
+      const patientMap = Object.fromEntries(((patientResult.data ?? []) as Patient[]).map((patient) => [patient.id, patient]))
       const appointmentRows = (appointmentResult.data ?? []) as Appointment[]
       const waitingRows = (waitingResult.data ?? []) as Appointment[]
       const doctorIds = [...new Set([...appointmentRows, ...waitingRows].map((appointment) => appointment.doctor_id).filter((id): id is string => Boolean(id)))]
@@ -1557,13 +1628,14 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
     return () => {
       cancelled = true
     }
-  }, [clinicId, refreshVersion])
+  }, [clinicId, timezone, refreshVersion])
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayInputValue(timezone)
   const todayAppointments = appointments.filter((appointment) => appointment.appointment_date === today)
-  const visibleWaitingAppointments = waitingAppointments.filter((appointment) => role !== 'doctor' || appointment.doctor_id === userId)
-  const displayedAppointments = activeView === 'today' ? todayAppointments : activeView === 'waiting' ? visibleWaitingAppointments : appointments
-  const hasAppointments = appointments.length > 0 || visibleWaitingAppointments.length > 0
+  const activeAppointments = waitingAppointments.filter((appointment) => appointment.status === 'in_progress' && (role === 'admin' || appointment.doctor_id === userId))
+  const visibleWaitingAppointments = waitingAppointments.filter((appointment) => appointment.status !== 'in_progress').filter((appointment) => role !== 'doctor' || appointment.doctor_id === userId)
+  const displayedAppointments = activeView === 'active' ? activeAppointments : activeView === 'today' ? todayAppointments : activeView === 'waiting' ? visibleWaitingAppointments : appointments
+  const hasAppointments = appointments.length > 0 || visibleWaitingAppointments.length > 0 || activeAppointments.length > 0
 
   async function transitionAppointment(appointment: Appointment, nextStatus: 'arrived' | 'waiting') {
     const expectedStatus = nextStatus === 'arrived' ? ['scheduled', 'confirmed'] : ['arrived']
@@ -1590,7 +1662,7 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
   }
 
   async function startConsultation(appointment: Appointment) {
-    if (role === 'receptionist' || appointment.status !== 'waiting' || (role === 'doctor' && appointment.doctor_id !== userId)) return
+    if (startLock.current || !['admin', 'doctor'].includes(role) || !['waiting', 'in_progress'].includes(appointment.status) || (role === 'doctor' && appointment.doctor_id !== userId)) return
     if (!supabase) {
       setTransitionError('Supabase is not configured.')
       return
@@ -1598,19 +1670,26 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
 
     setTransitioningId(appointment.id)
     setTransitionError(null)
-    const { data, error: startError } = await supabase.rpc('start_consultation', { p_appointment_id: appointment.id } as never)
-    setTransitioningId(null)
-    if (startError || !data) {
-      setTransitionError('We could not start this consultation. Refresh the queue and try again.')
-      return
+    startLock.current = true
+    try {
+      const { data, error: startError } = await supabase.rpc('start_consultation', { p_appointment_id: appointment.id } as never)
+      if (startError || !data) {
+        setTransitionError('We could not start this consultation. Refresh the queue and try again.')
+        return
+      }
+      const patient = patients[appointment.patient_id]
+      if (!patient) {
+        setTransitionError('The consultation started, but the patient details could not be loaded.')
+        return
+      }
+      setActiveConsultation({ appointment: { ...appointment, status: 'in_progress' }, patient, visit: data as Visit })
+      setRefreshVersion((version) => version + 1)
+    } catch {
+      setTransitionError('The consultation could not be confirmed. Refresh and use Resume Consultation if it has started.')
+    } finally {
+      startLock.current = false
+      setTransitioningId(null)
     }
-    const patient = patients[appointment.patient_id]
-    if (!patient) {
-      setTransitionError('The consultation started, but the patient details could not be loaded.')
-      return
-    }
-    setActiveConsultation({ appointment: { ...appointment, status: 'in_progress' }, patient, visit: data as Visit })
-    setRefreshVersion((version) => version + 1)
   }
 
   async function confirmQueueExit(reason: string) {
@@ -1627,23 +1706,30 @@ function AppointmentsView({ clinicId, userId, role, onOpenPatients }: { clinicId
     setRefreshVersion((version) => version + 1)
   }
 
-  function finishConsultation() {
+  function finishConsultation(visit: Visit) {
+    if (activeConsultation) setClosedVisit({ ...activeConsultation, appointment: { ...activeConsultation.appointment, status: 'completed' }, visit })
+    setCreatedInvoice(null)
     setActiveConsultation(null)
     setRefreshVersion((version) => version + 1)
   }
 
+  if (activeConsultation) return <ConsultationPanel key={activeConsultation.visit.id} appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} userId={userId} role={role} clinicianLabel={doctors[activeConsultation.visit.doctor_id] ?? 'Assigned clinician'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} />
+  if (closedVisit && creatingInvoice && (role === 'admin' || role === 'receptionist')) return <InvoiceForm clinicId={clinicId} patient={closedVisit.patient} visit={closedVisit.visit} onCancel={() => setCreatingInvoice(false)} onCreated={(invoice) => { setCreatedInvoice(invoice); setCreatingInvoice(false) }} />
+  if (closedVisit) return <section className="registration-panel"><h2>{createdInvoice ? 'Invoice created' : 'Visit closed'}</h2><p>{closedVisit.patient.first_name} {closedVisit.patient.last_name} · File {closedVisit.patient.patient_number} · Visit {formatDateTime(closedVisit.visit.visit_date)}</p>{createdInvoice ? <p>Invoice {createdInvoice.invoice_number} created. Payment is recorded separately in the patient file.</p> : <p>Clinical information is saved. {role === 'doctor' ? 'Reception or an administrator can now create the invoice.' : 'Create an invoice when ready; closing does not create charges.'}</p>}<div className="form-actions">{!createdInvoice && (role === 'admin' || role === 'receptionist') && <button type="button" onClick={() => setCreatingInvoice(true)}>Create Invoice</button>}<button type="button" className="button-secondary" onClick={() => onViewPatient(closedVisit.patient)}>View Patient</button><button type="button" className="button-secondary" onClick={() => { setClosedVisit(null); setSelectedAppointmentId(null) }}>Return to Appointments</button></div></section>
+  const selectedAppointment = [...appointments, ...waitingAppointments].find((row) => row.id === selectedAppointmentId)
+  if (selectedAppointmentId && !loading) return <section className="profile-page"><button className="back-button" type="button" onClick={() => setSelectedAppointmentId(null)}>← Back to appointments</button><h2>Appointment</h2>{transitionError && <SoapSmileFeedback tone="error">{transitionError}</SoapSmileFeedback>}{selectedAppointment ? <AppointmentCard appointment={selectedAppointment} patient={patients[selectedAppointment.patient_id]} doctorName={doctors[selectedAppointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} onQueueExit={(appointment, status) => setQueueExit({ appointment, status })} transitioning={transitioningId === selectedAppointment.id} /> : <p>Appointment unavailable. Return to appointments and refresh.</p>}{queueExit && <QueueExitDialog appointment={queueExit.appointment} patient={patients[queueExit.appointment.patient_id]} status={queueExit.status} onClose={() => setQueueExit(null)} onConfirm={confirmQueueExit} />}{queueSuccess && <SoapSmileFeedback tone="success">{queueSuccess}</SoapSmileFeedback>}</section>
+
   return (
     <div className="appointments-page">
       <div className="page-heading"><div><p className="eyebrow">Care coordination</p><h1>Appointments</h1><p className="panel-copy">Schedule and manage today\'s patient arrivals.</p></div><div className="appointments-heading-actions"><button className="button-secondary refresh-button" onClick={() => setRefreshVersion((version) => version + 1)} type="button">Refresh</button><button className="primary-action" onClick={onOpenPatients} type="button"><SoapSmileIcon name="patients" />Find patient</button></div></div>
-      <div className="appointment-tabs" role="tablist" aria-label="Appointment views"><button className={activeView === 'upcoming' ? 'active' : ''} onClick={() => setActiveView('upcoming')} role="tab" aria-selected={activeView === 'upcoming'} type="button">Upcoming <span>{appointments.length}</span></button><button className={activeView === 'today' ? 'active' : ''} onClick={() => setActiveView('today')} role="tab" aria-selected={activeView === 'today'} type="button">Today <span>{todayAppointments.length}</span></button><button className={activeView === 'waiting' ? 'active' : ''} onClick={() => setActiveView('waiting')} role="tab" aria-selected={activeView === 'waiting'} type="button">Waiting queue <span>{visibleWaitingAppointments.length}</span></button></div>
+      <div className="appointment-tabs" role="tablist" aria-label="Appointment views"><button className={activeView === 'upcoming' ? 'active' : ''} onClick={() => setActiveView('upcoming')} role="tab" aria-selected={activeView === 'upcoming'} type="button">Upcoming <span>{appointments.length}</span></button><button className={activeView === 'today' ? 'active' : ''} onClick={() => setActiveView('today')} role="tab" aria-selected={activeView === 'today'} type="button">Today <span>{todayAppointments.length}</span></button><button className={activeView === 'waiting' ? 'active' : ''} onClick={() => setActiveView('waiting')} role="tab" aria-selected={activeView === 'waiting'} type="button">Waiting queue <span>{visibleWaitingAppointments.length}</span></button>{(role === 'admin' || role === 'doctor') && <button className={activeView === 'active' ? 'active' : ''} onClick={() => setActiveView('active')} role="tab" aria-selected={activeView === 'active'} type="button">In progress <span>{activeAppointments.length}</span></button>}</div>
       {loading && <SoapSmileLoadingState>Loading upcoming appointments...</SoapSmileLoadingState>}
       {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
       {!loading && !error && transitionError && <SoapSmileFeedback tone="error">{transitionError}</SoapSmileFeedback>}
       {queueSuccess && <SoapSmileFeedback tone="success">{queueSuccess}</SoapSmileFeedback>}
       {queueExit && <QueueExitDialog appointment={queueExit.appointment} patient={patients[queueExit.appointment.patient_id]} status={queueExit.status} onClose={() => setQueueExit(null)} onConfirm={confirmQueueExit} />}
-      {activeConsultation && <><ConsultationPanel appointment={activeConsultation.appointment} patient={activeConsultation.patient} visit={activeConsultation.visit} clinicianLabel={role === 'admin' ? 'clinic administrator' : 'assigned doctor'} onCompleted={finishConsultation} onCancel={() => setActiveConsultation(null)} /><DentalChart role={role} clinicId={clinicId} visit={activeConsultation.visit} userId={userId} canCreate defaultOpen /></>}
       {!loading && !error && !hasAppointments && <SoapSmileEmptyState icon="appointments"><h2>No upcoming appointments</h2><p>Appointments booked from patient files will appear here.</p></SoapSmileEmptyState>}
-      {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <SoapSmileEmptyState icon="appointments"><h2>{activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></SoapSmileEmptyState>}
+      {!loading && !error && hasAppointments && displayedAppointments.length === 0 && <SoapSmileEmptyState icon="appointments"><h2>{activeView === 'active' ? 'No unfinished consultations' : activeView === 'waiting' ? 'No patients waiting' : activeView === 'today' ? 'No appointments today' : 'No upcoming appointments'}</h2><p>{activeView === 'waiting' ? 'Patients sent to waiting will appear here.' : 'Appointments booked from patient files will appear here.'}</p></SoapSmileEmptyState>}
       {!activeConsultation && !loading && !error && displayedAppointments.length > 0 && <div className="appointment-list" tabIndex={0} role="region" aria-label="Appointment list">{displayedAppointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} patient={patients[appointment.patient_id]} doctorName={doctors[appointment.doctor_id ?? '']} role={role} userId={userId} onTransition={transitionAppointment} onStartConsultation={startConsultation} onQueueExit={(appointment, status) => { setQueueSuccess(null); setQueueExit({ appointment, status }) }} transitioning={transitioningId === appointment.id} />)}</div>}
     </div>
   )
@@ -1679,7 +1765,7 @@ function QueueExitDialog({ appointment, patient, status, onClose, onConfirm }: {
 function AppointmentCard({ appointment, patient, doctorName, role, userId, onTransition, onStartConsultation, onQueueExit, transitioning }: { appointment: Appointment; patient?: PatientAppointmentSummary; doctorName?: string; role: UserRole; userId: string; onTransition: (appointment: Appointment, nextStatus: 'arrived' | 'waiting') => void; onStartConsultation: (appointment: Appointment) => void; onQueueExit: (appointment: Appointment, status: QueueExitStatus) => void; transitioning: boolean }) {
   const canCheckIn = appointment.status === 'scheduled' || appointment.status === 'confirmed'
   const canSendToWaiting = appointment.status === 'arrived'
-  const canStartConsultation = appointment.status === 'waiting' && (role === 'admin' || (role === 'doctor' && appointment.doctor_id === userId))
+  const canStartConsultation = ['waiting', 'in_progress'].includes(appointment.status) && (role === 'admin' || (role === 'doctor' && appointment.doctor_id === userId))
   const canExitQueue = ['scheduled', 'confirmed', 'arrived', 'waiting'].includes(appointment.status) && (role === 'admin' || role === 'receptionist' || (role === 'doctor' && appointment.doctor_id === userId))
   function closeMenu(event: React.MouseEvent<HTMLButtonElement>) { event.currentTarget.closest('details')?.removeAttribute('open') }
   return <article className="appointment-card">
@@ -1689,8 +1775,8 @@ function AppointmentCard({ appointment, patient, doctorName, role, userId, onTra
       <div className="appointment-actions">
         {canCheckIn && <button onClick={() => onTransition(appointment, 'arrived')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Check In'}</button>}
         {canSendToWaiting && <button onClick={() => onTransition(appointment, 'waiting')} disabled={transitioning} type="button">{transitioning ? 'Updating...' : 'Send to Waiting'}</button>}
+        {canStartConsultation && <button type="button" disabled={transitioning || !patient} onClick={() => onStartConsultation(appointment)}>{appointment.status === 'in_progress' ? 'Resume Consultation' : 'Start Consultation'}</button>}
         {canExitQueue && <details className="queue-action-menu"><summary aria-label="Appointment actions">Actions</summary><div>
-          {canStartConsultation && <button type="button" disabled={transitioning || !patient} onClick={(event) => { closeMenu(event); onStartConsultation(appointment) }}>Start Consultation</button>}
           <button type="button" disabled={transitioning} onClick={(event) => { closeMenu(event); onQueueExit(appointment, 'cancelled') }}>Cancel appointment</button>
           <button type="button" disabled={transitioning} onClick={(event) => { closeMenu(event); onQueueExit(appointment, 'no_show') }}>No-show / Left</button>
         </div></details>}
@@ -1723,12 +1809,21 @@ function consultationFormFromVisit(visit: Visit): ConsultationFormValues {
   }
 }
 
-function ConsultationPanel({ appointment, patient, visit, clinicianLabel, onCompleted, onCancel }: { appointment: Appointment; patient: PatientAppointmentSummary; visit: Visit; clinicianLabel: string; onCompleted: () => void; onCancel: () => void }) {
+function ConsultationPanel({ appointment, patient, visit, userId, role, clinicianLabel, onCompleted, onCancel }: { appointment: Appointment; patient: Patient; visit: Visit; userId: string; role: UserRole; clinicianLabel: string; onCompleted: (visit: Visit) => void; onCancel: () => void }) {
   const [form, setForm] = useState<ConsultationFormValues>(() => consultationFormFromVisit(visit))
   const [saving, setSaving] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const [section, setSection] = useState<'notes' | 'procedures' | 'dental' | 'prescriptions' | 'investigations' | 'review'>('notes')
+  const [savedForm, setSavedForm] = useState(() => consultationFormFromVisit(visit))
+  const [recordCounts, setRecordCounts] = useState({ prescriptions: 0, investigations: 0, verified: false })
+  const [dentalCount, setDentalCount] = useState<number | null>(null)
+  const [procedureCount, setProcedureCount] = useState<number | null>(null)
+  const actionLock = useRef(false)
+  useUnsavedWorkspace(JSON.stringify(form) !== JSON.stringify(savedForm), saving || completing, true)
+  const leave = () => { if (confirmWorkspaceLeave()) onCancel() }
 
   function updateField(field: keyof ConsultationFormValues, value: string) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -1750,21 +1845,31 @@ function ConsultationPanel({ appointment, patient, visit, clinicianLabel, onComp
   }
 
   async function saveDraft() {
+    if (actionLock.current) return false
     if (!supabase) {
       setError('Supabase is not configured.')
       return false
     }
+    actionLock.current = true
     setSaving(true)
     setError(null)
     setMessage(null)
-    const { error: saveError } = await supabase.rpc('save_consultation', rpcPayload() as never)
-    setSaving(false)
-    if (saveError) {
-      setError('We could not save this consultation. Refresh and try again.')
+    try {
+      const { error: saveError } = await supabase.rpc('save_consultation', rpcPayload() as never)
+      if (saveError) {
+        setError('We could not save this consultation. Refresh and try again.')
+        return false
+      }
+      setSavedForm({ ...form })
+      setMessage('Notes saved.')
+      return true
+    } catch {
+      setError('The save could not be confirmed. Stay in this visit and review before continuing.')
       return false
+    } finally {
+      actionLock.current = false
+      setSaving(false)
     }
-    setMessage('Draft saved.')
-    return true
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -1773,24 +1878,44 @@ function ConsultationPanel({ appointment, patient, visit, clinicianLabel, onComp
   }
 
   async function completeConsultation() {
+    if (procedureCount === null || procedureCount === 0) { setError('Record at least one procedure or Consultation Only before closing this visit.'); setSection('procedures'); return }
+    if (actionLock.current || !confirmWorkspaceLeave(true)) return
     if (!supabase) {
       setError('Supabase is not configured.')
       return
     }
+    actionLock.current = true
     setCompleting(true)
     setError(null)
     setMessage(null)
-    const { error: completeError } = await supabase.rpc('complete_consultation', rpcPayload() as never)
-    setCompleting(false)
-    if (completeError) {
-      setError('We could not complete this consultation. Refresh and try again.')
-      return
+    try {
+      const { data, error: completeError } = await supabase.rpc('complete_consultation', rpcPayload() as never)
+      if (completeError || !data) {
+        setError(completeError?.message || 'We could not complete this consultation. Refresh and try again.')
+        return
+      }
+      setMessage('Consultation completed and added to visit history.')
+      onCompleted(data as Visit)
+    } catch {
+      setError('Closure could not be confirmed. Refresh appointment status before trying to record more information.')
+    } finally {
+      actionLock.current = false
+      setCompleting(false)
     }
-    setMessage('Consultation completed and added to visit history.')
-    onCompleted()
   }
 
-  return <section className="registration-panel consultation-panel" aria-labelledby="consultation-heading"><div className="registration-heading"><p className="eyebrow">Active consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="panel-copy">File {patient.patient_number} · {appointment.service || 'Appointment consultation'} · Working as {clinicianLabel}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Leave consultation</button><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? <><SoapSmileCompanion state="saving" />Saving...</> : 'Save draft'}</button><button type="button" disabled={saving || completing} onClick={() => { void completeConsultation() }}>{completing ? <><SoapSmileLoader size="button" />Completing...</> : 'Complete Consultation'}</button></div></form><VisitClinicalRecordsPanel clinicId={visit.clinic_id} patientId={visit.patient_id} visitId={visit.id} doctorId={visit.doctor_id} disabled={saving || completing} />{message && <SoapSmileFeedback tone="success">{message}</SoapSmileFeedback>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
+  return <section className="profile-page consultation-workspace" aria-labelledby="consultation-heading">
+    <button className="back-button" type="button" disabled={saving || completing} onClick={leave}>← Back to appointments</button>
+    <div className="profile-header"><div><p className="eyebrow">Consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p>File {patient.patient_number} · {formatDate(appointment.appointment_date)} {formatTime(appointment.start_time)} · {clinicianLabel} · In progress</p></div><button type="button" disabled={saving || completing} onClick={() => setSection('review')}>Review & Close Visit</button></div>
+    <details className="profile-card"><summary>Current Clinical Profile</summary><ClinicalProfileValues profile={patient} /></details>
+    <div className="appointment-tabs" role="tablist" aria-label="Consultation sections">{([['notes', 'Consultation'], ['procedures', 'Procedures'], ['dental', 'Dental Chart'], ['prescriptions', 'Prescriptions (' + recordCounts.prescriptions + ')'], ['investigations', 'Investigations (' + recordCounts.investigations + ')'], ['review', 'Review']] as const).map(([key, label]) => <button type="button" key={key} id={'consultation-tab-' + key} aria-controls={'consultation-section-' + key} role="tab" aria-selected={section === key} className={section === key ? 'active' : ''} onClick={() => setSection(key)}>{label}</button>)}</div>
+    <div id="consultation-section-notes" role="tabpanel" aria-labelledby="consultation-tab-notes" hidden={section !== 'notes'} className="registration-panel"><form className="patient-form" onSubmit={handleSubmit}><fieldset disabled={saving || completing} style={{ display: 'contents' }}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label></fieldset><div className="form-actions"><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? <><SoapSmileCompanion state="saving" />Saving...</> : 'Save Notes'}</button><button type="button" disabled={saving || completing} onClick={() => setSection('review')}>Review & Close Visit</button></div></form></div>
+    <div id="consultation-section-procedures" role="tabpanel" aria-labelledby="consultation-tab-procedures" hidden={section !== 'procedures'}><VisitProcedures visit={visit} userId={userId} role={role} canCreate disabled={saving || completing} onCount={setProcedureCount} /></div>
+    <div id="consultation-section-dental" role="tabpanel" aria-labelledby="consultation-tab-dental" hidden={section !== 'dental'}><DentalChart clinicId={visit.clinic_id} visit={visit} userId={userId} role={role} canCreate={!saving && !completing} defaultOpen onActivityCount={setDentalCount} /></div>
+    <div hidden={section !== 'prescriptions' && section !== 'investigations'}><VisitClinicalRecordsPanel clinicId={visit.clinic_id} patientId={visit.patient_id} visitId={visit.id} doctorId={visit.doctor_id} disabled={saving || completing} activeSection={section === 'investigations' ? 'investigations' : 'prescriptions'} onCounts={setRecordCounts} /></div>
+    {section === 'review' && <section className="profile-card" id="consultation-section-review" role="tabpanel" aria-labelledby="consultation-tab-review"><h3>Review & Close Visit</h3><dl className="detail-list"><DetailItem label="Procedures performed (required)" value={procedureCount === null ? 'Not yet verified; open Procedures and refresh' : procedureCount === 0 ? 'Record at least one procedure or Consultation Only' : procedureCount + ' effective procedure record(s)'} /><DetailItem label="Notes / findings" value={[form.chief_complaint, form.examination, form.assessment, form.clinical_notes].some((value) => value.trim()) ? 'Recorded in this consultation; current notes will be saved on close.' : 'Not recorded'} /><DetailItem label="Dental chart" value={dentalCount === null ? 'Activity not yet verified; review Dental Chart if needed.' : dentalCount + ' saved entries for this visit'} /><DetailItem label="Prescriptions" value={recordCounts.verified ? String(recordCounts.prescriptions) : 'Records not yet verified'} /><DetailItem label="Investigations" value={recordCounts.verified ? String(recordCounts.investigations) : 'Records not yet verified'} /><DetailItem label="Billing" value="Invoice creation is available after clinical closure to reception or an administrator." /></dl><p>At least one structured procedure or Consultation Only is required. Other records remain optional. Closing saves notes and prevents ordinary additions.</p>{(procedureCount === null || procedureCount === 0) && <button type="button" className="button-secondary" onClick={() => setSection('procedures')}>+ Record Procedure</button>}<div className="form-actions"><button type="button" className="button-secondary" onClick={() => setSection('notes')} disabled={completing}>Back to consultation</button><button type="button" disabled={saving || completing || procedureCount === null || procedureCount === 0} onClick={() => void completeConsultation()}>{completing ? 'Closing visit...' : 'Close Visit'}</button></div></section>}
+    {message && <SoapSmileFeedback tone="success">{message}</SoapSmileFeedback>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+  </section>
 }
 
 type PrescriptionFormValues = {
@@ -1813,7 +1938,7 @@ type InvestigationFormValues = {
 const initialPrescriptionForm: PrescriptionFormValues = { medicine: '', strength: '', dose: '', route: '', frequency: '', duration: '', quantity: '', instructions: '' }
 const initialInvestigationForm: InvestigationFormValues = { investigation_type: '', status: '', notes: '' }
 
-function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, disabled }: { clinicId: string; patientId: string; visitId: string; doctorId: string; disabled: boolean }) {
+function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, disabled, activeSection, onCounts }: { clinicId: string; patientId: string; visitId: string; doctorId: string; disabled: boolean; activeSection?: 'prescriptions' | 'investigations'; onCounts?: (counts: { prescriptions: number; investigations: number; verified: boolean }) => void }) {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [prescriptionForm, setPrescriptionForm] = useState<PrescriptionFormValues>(initialPrescriptionForm)
@@ -1821,6 +1946,10 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useUnsavedWorkspace(JSON.stringify(prescriptionForm) !== JSON.stringify(initialPrescriptionForm) || JSON.stringify(investigationForm) !== JSON.stringify(initialInvestigationForm), saving)
+  const recordLock = useRef(false)
+  useEffect(() => { onCounts?.({ prescriptions: prescriptions.length, investigations: investigations.length, verified: !loading && !error }) }, [onCounts, prescriptions.length, investigations.length, loading, error])
 
   useEffect(() => {
     let cancelled = false
@@ -1849,10 +1978,12 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
 
   async function addPrescription(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (recordLock.current || disabled) return
     if (!prescriptionForm.medicine.trim() || !supabase) {
       setError(!supabase ? 'Supabase is not configured.' : 'Medicine is required.')
       return
     }
+    recordLock.current = true
     setSaving(true)
     setError(null)
     const { data, error: insertError } = await supabase.from('prescriptions').insert({
@@ -1869,6 +2000,7 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
       quantity: prescriptionForm.quantity.trim() ? Number(prescriptionForm.quantity) : null,
       instructions: prescriptionForm.instructions.trim() || null,
     } as never).select('*').single()
+    recordLock.current = false
     setSaving(false)
     if (insertError || !data) {
       setError('We could not add this prescription. Confirm that the consultation is still active.')
@@ -1880,10 +2012,12 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
 
   async function addInvestigation(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (recordLock.current || disabled) return
     if (!investigationForm.investigation_type.trim() || !supabase) {
       setError(!supabase ? 'Supabase is not configured.' : 'Investigation type is required.')
       return
     }
+    recordLock.current = true
     setSaving(true)
     setError(null)
     const { data, error: insertError } = await supabase.from('investigations').insert({
@@ -1895,6 +2029,7 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
       status: investigationForm.status.trim() || null,
       notes: investigationForm.notes.trim() || null,
     } as never).select('*').single()
+    recordLock.current = false
     setSaving(false)
     if (insertError || !data) {
       setError('We could not add this investigation. Confirm that the consultation is still active.')
@@ -1904,7 +2039,7 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
     setInvestigationForm(initialInvestigationForm)
   }
 
-  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>Prescriptions and investigations</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <SoapSmileLoadingState>Loading visit records...</SoapSmileLoadingState>}{!loading && <div className="clinical-records-grid"><section><h4>Prescriptions</h4>{prescriptions.length === 0 ? <SoapSmileEmptyState><p>No prescriptions recorded.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{prescriptions.map((prescription) => <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article>)}</div>}<form className="record-form" onSubmit={addPrescription}><input aria-label="Medicine" placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled} required /><input aria-label="Strength" placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled} /><input aria-label="Dose" placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled} /><input aria-label="Route" placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled} /><input aria-label="Frequency" placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled} /><input aria-label="Duration" placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled} /><input type="number" min="0" step="any" aria-label="Quantity" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled} /><input aria-label="Instructions" placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add prescription'}</button></form></section><section><h4>Investigations</h4>{investigations.length === 0 ? <SoapSmileEmptyState><p>No investigations requested.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{investigations.map((investigation) => <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article>)}</div>}<form className="record-form" onSubmit={addInvestigation}><input aria-label="Investigation type" placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled} required /><input aria-label="Status" placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled} /><textarea aria-label="Notes" placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add investigation'}</button></form></section></div>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
+  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>{activeSection === 'prescriptions' ? 'Prescriptions' : activeSection === 'investigations' ? 'Investigations' : 'Prescriptions and investigations'}</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <SoapSmileLoadingState>Loading visit records...</SoapSmileLoadingState>}{!loading && <div className="clinical-records-grid" style={activeSection ? { gridTemplateColumns: '1fr' } : undefined}><section id={activeSection ? 'consultation-section-prescriptions' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-prescriptions' : undefined} hidden={activeSection === 'investigations'}><h4>Prescriptions</h4>{prescriptions.length === 0 ? <SoapSmileEmptyState><p>No prescriptions recorded.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{prescriptions.map((prescription) => <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article>)}</div>}<form className="record-form" onSubmit={addPrescription}><input aria-label="Medicine" placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Strength" placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled || saving} /><input aria-label="Dose" placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled || saving} /><input aria-label="Route" placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled || saving} /><input aria-label="Frequency" placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled || saving} /><input aria-label="Duration" placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled || saving} /><input type="number" min="0" step="any" aria-label="Quantity" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled || saving} /><input aria-label="Instructions" placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled || saving} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add prescription'}</button></form></section><section id={activeSection ? 'consultation-section-investigations' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-investigations' : undefined} hidden={activeSection === 'prescriptions'}><h4>Investigations</h4>{investigations.length === 0 ? <SoapSmileEmptyState><p>No investigations requested.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{investigations.map((investigation) => <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article>)}</div>}<form className="record-form" onSubmit={addInvestigation}><input aria-label="Investigation type" placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Status" placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled || saving} /><textarea aria-label="Notes" placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled || saving} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add investigation'}</button></form></section></div>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
 type PatientFormValues = {
@@ -1931,7 +2066,7 @@ const initialPatientForm: PatientFormValues = {
   address: '',
 }
 
-function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patientToOpen, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
+function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patientToOpen, onViewAppointment, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null; onViewAppointment: (appointment: Appointment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1944,6 +2079,7 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
   const [startingRegisteredVisit, setStartingRegisteredVisit] = useState(false)
   const registrationStartLock = useRef(false)
   const [refreshVersion, setRefreshVersion] = useState(0)
+  useUnsavedWorkspace(false, startingRegisteredVisit)
 
   useEffect(() => {
     let cancelled = false
@@ -1958,6 +2094,7 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
       const { data, error: queryError } = await supabase
         .from('patients')
         .select('*')
+        .eq('clinic_id', clinicId)
         .order('created_at', { ascending: false })
 
       if (cancelled) return
@@ -1973,7 +2110,7 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
     return () => {
       cancelled = true
     }
-  }, [refreshVersion])
+  }, [clinicId, refreshVersion])
 
   const normalizedSearch = searchTerm.trim().toLowerCase()
   const visiblePatients = patients.filter((patient) => {
@@ -2000,12 +2137,12 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
     try {
       const result = await startEncounterContext({ p_clinic_id: clinicId, p_patient_id: registeredPatient.id })
       if (result.error) throw new Error(result.error.message)
-      if (!result.data) throw new Error('The encounter could not be confirmed. Retry Start New Visit.')
+      if (!result.data) throw new Error('The encounter could not be confirmed. Retry Book Appointment.')
       setEncounterToOpen(result.data)
       setSelectedPatient(registeredPatient)
       setRegisteredPatient(null)
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'We could not start the visit. Try again.')
+    } catch {
+      setError('We could not prepare appointment booking. Please try again.')
     } finally {
       registrationStartLock.current = false
       setStartingRegisteredVisit(false)
@@ -2019,18 +2156,19 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
     setRefreshVersion((version) => version + 1)
   }
 
+  if (showRegistration) return <PatientRegistrationForm clinicId={clinicId} onCancel={() => setShowRegistration(false)} onRegistered={handleRegistered} />
+  if (selectedPatient) return <PatientProfile key={clinicId + ':' + selectedPatient.id} onViewAppointment={onViewAppointment} initialEncounter={encounterToOpen?.patient_id === selectedPatient.id ? encounterToOpen : null} clinicId={clinicId} clinicName={clinicName} clinicTimezone={clinicTimezone} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => { if (!confirmWorkspaceLeave()) return; setSelectedPatient(null); setEncounterToOpen(null) }} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />
+
   return (
     <div className="patients-page">
       <div className="page-heading">
-        <div><p className="eyebrow">Patient management</p><h1>{selectedPatient ? 'Patient details' : 'Patients'}</h1><p className="panel-copy">{selectedPatient ? 'Review and update demographic information.' : 'Register and review the people receiving care at your clinic.'}</p></div>
+        <div><p className="eyebrow">Patient management</p><h1>{selectedPatient ? 'Patient details' : 'Patients'}</h1><p className="panel-copy">{selectedPatient ? 'Review patient details and clinical background.' : 'Register and review the people receiving care at your clinic.'}</p></div>
         {!showRegistration && !registeredPatient && <button className="primary-action" onClick={() => { setSuccess(null); setError(null); setShowRegistration(true) }} type="button">Register New Patient</button>}
       </div>
       {success && <SoapSmileFeedback tone="success">{success}</SoapSmileFeedback>}
-      {registeredPatient && <section className="encounter-next-step"><h2>Patient registered - next step</h2><p>{[registeredPatient.first_name, registeredPatient.middle_name, registeredPatient.last_name].filter(Boolean).join(' ')} · File {registeredPatient.patient_number}</p><p>Start a new visit to arrange care, or finish registration without creating an encounter.</p><div className="form-actions"><button type="button" disabled={startingRegisteredVisit} onClick={() => void startRegisteredVisit()}>{startingRegisteredVisit ? 'Starting visit...' : 'Start New Visit'}</button><button type="button" className="button-secondary" disabled={startingRegisteredVisit} onClick={() => { setRegisteredPatient(null); setEncounterToOpen(null); setError(null) }}>Finish Registration</button></div></section>}
+      {registeredPatient && <section className="encounter-next-step"><h2>Patient registered - next step</h2><p>{[registeredPatient.first_name, registeredPatient.middle_name, registeredPatient.last_name].filter(Boolean).join(' ')} · File {registeredPatient.patient_number}</p><p>Book an appointment or review the patient file.</p><div className="form-actions"><button type="button" disabled={startingRegisteredVisit} onClick={() => void startRegisteredVisit()}>{startingRegisteredVisit ? 'Preparing booking...' : 'Book Appointment'}</button><button type="button" className="button-secondary" disabled={startingRegisteredVisit} onClick={() => { setSelectedPatient(registeredPatient); setRegisteredPatient(null); setEncounterToOpen(null); setError(null) }}>View Patient</button></div></section>}
       {registeredPatient && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-      {showRegistration && <PatientRegistrationForm clinicId={clinicId} onCancel={() => setShowRegistration(false)} onRegistered={handleRegistered} />}
-      {selectedPatient && <PatientProfile key={clinicId + ':' + selectedPatient.id} initialEncounter={encounterToOpen?.patient_id === selectedPatient.id ? encounterToOpen : null} clinicId={clinicId} clinicName={clinicName} clinicTimezone={clinicTimezone} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => { setSelectedPatient(null); setEncounterToOpen(null) }} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />}
-      {!selectedPatient && !registeredPatient && <>
+      {!selectedPatient && !registeredPatient && !showRegistration && <>
         {!showRegistration && <div className="patient-directory-summary"><div><span className="summary-overline">CLINIC ROSTER</span><strong>{patients.length}</strong><span>patient files</span></div><p>{loading ? 'Loading clinic records...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'match' : 'matches'}${searchTerm.trim() ? ' for this search' : ' in the directory'}`}</p></div>}
         <div className="patient-toolbar"><PatientSearchField label="Search patients" value={searchTerm} onChange={setSearchTerm} placeholder="File number, name, or phone" /><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
         {loading && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}
@@ -2159,6 +2297,8 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
     setPayments((current) => ({ ...current, [invoice.id]: [...(current[invoice.id] ?? []), payment] }))
   }
 
+  if (billingVisit && selectedPatient) return <InvoiceForm clinicId={clinicId} patient={selectedPatient} visit={billingVisit} onCancel={() => setBillingVisit(null)} onCreated={handleInvoiceCreated} />
+
   return (
     <div className="patients-page soap-billing-page">
       <div className="page-heading"><div><p className="eyebrow">Management</p><h1>Billing</h1><p className="panel-copy">Clinic currency: {currency}. Find a patient to review visits, invoices, and payments.</p></div></div>
@@ -2196,6 +2336,10 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useUnsavedWorkspace(JSON.stringify(form) !== JSON.stringify(initialPatientForm), submitting)
+  const requestLock = useRef(false)
+  const leave = () => { if (confirmWorkspaceLeave()) onCancel() }
+
   function updateField(field: keyof PatientFormValues, value: string) {
     setForm((current) => ({
       ...current,
@@ -2207,6 +2351,7 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (requestLock.current) return
     const firstName = form.first_name.trim()
     const lastName = form.last_name.trim()
     const email = form.email.trim()
@@ -2234,6 +2379,7 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
       return
     }
 
+    requestLock.current = true
     setSubmitting(true)
     setError(null)
     const { data: insertedPatient, error: insertError } = await supabase.from('patients').insert({
@@ -2248,6 +2394,7 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
       email: email || null,
       address: form.address.trim() || null,
     } as never).select('*').single()
+    requestLock.current = false
     setSubmitting(false)
     if (insertError) {
       setError(insertError.code === '23505' ? 'That patient number is already in use in this clinic.' : 'We could not register the patient. Please try again.')
@@ -2261,9 +2408,9 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
   }
 
   return (
-    <section className="registration-panel" aria-labelledby="registration-heading">
+    <section className="registration-panel" aria-labelledby="registration-heading"><button type="button" className="back-button" disabled={submitting} onClick={leave}>← Back</button>
       <div className="registration-heading"><div><p className="eyebrow">Patient management</p><h2 id="registration-heading">Register New Patient</h2><p className="panel-copy">Enter the minimum details needed to create a patient file.</p><p className="generated-number-note">Patient file number will be generated automatically.</p></div></div>
-      <form className="patient-form" onSubmit={handleSubmit}>
+      <form className="patient-form" onSubmit={handleSubmit}><fieldset disabled={submitting} style={{ display: 'contents' }}>
         <label>First name<input value={form.first_name} onChange={(event) => updateField('first_name', event.target.value)} autoComplete="given-name" required /></label>
         <label>Middle name<input value={form.middle_name} onChange={(event) => updateField('middle_name', event.target.value)} autoComplete="additional-name" /></label>
         <label>Last name<input value={form.last_name} onChange={(event) => updateField('last_name', event.target.value)} autoComplete="family-name" required /></label>
@@ -2273,7 +2420,7 @@ function PatientRegistrationForm({ clinicId, onCancel, onRegistered }: { clinicI
         <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>
         <label>Email<input type="email" value={form.email} onChange={(event) => updateField('email', event.target.value)} autoComplete="email" /></label>
         <label className="full-width">Address<input value={form.address} onChange={(event) => updateField('address', event.target.value)} autoComplete="street-address" /></label>
-        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving patient...</> : 'Save patient'}</button></div>
+        </fieldset><div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving patient...</> : 'Save patient'}</button></div>
       </form>
       {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
@@ -2291,7 +2438,7 @@ function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (
   )
 }
 
-function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patient, initialEncounter, onBack, onUpdated, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; initialEncounter?: EncounterContext | null; onBack: () => void; onUpdated: (patient: Patient) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
+function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patient, initialEncounter, onViewAppointment, onBack, onUpdated, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; initialEncounter?: EncounterContext | null; onViewAppointment: (appointment: Appointment) => void; onBack: () => void; onUpdated: (patient: Patient) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
   const [editing, setEditing] = useState(false)
   const [visits, setVisits] = useState<Visit[]>([])
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({})
@@ -2313,7 +2460,9 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
   const [startingEncounter, setStartingEncounter] = useState(false)
   const [encounterRefresh, setEncounterRefresh] = useState(0)
   const encounterStartLock = useRef(false)
-  const [appointmentSuccess, setAppointmentSuccess] = useState<string | null>(null)
+  const [bookedAppointment, setBookedAppointment] = useState<Appointment | null>(null)
+  const [checkingIn, setCheckingIn] = useState(false)
+  useUnsavedWorkspace(false, startingEncounter || checkingIn)
   const canViewFinance = role === 'admin' || role === 'receptionist'
   const canSchedule = ['admin', 'receptionist', 'doctor'].includes(role)
 
@@ -2325,7 +2474,7 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
       const result = await supabase.from('encounter_contexts').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).eq('state', 'pending').maybeSingle()
       if (cancelled) return
       setEncounterLoading(false)
-      if (result.error) { setEncounterError('We could not load pending care. Refresh pending care before booking.'); return }
+      if (result.error) { setEncounterError('We could not check appointment booking. Book Appointment will retry safely.'); return }
       setPendingEncounter(result.data as EncounterContext | null)
       setEncounterError(null)
     }
@@ -2337,26 +2486,27 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
     if (encounterStartLock.current || !canSchedule) return
     // Keep the same context even if another staff member booked it meanwhile.
     // Booking will recover its actual appointment, rather than starting a new episode.
-    if (pendingEncounter) {
-      setEncounter(pendingEncounter)
+    const bookingContext = encounter ?? pendingEncounter
+    if (bookingContext) {
+      setEncounter(bookingContext)
       setShowAppointmentForm(true)
       setEncounterError(null)
-      setAppointmentSuccess(null)
+      setBookedAppointment(null)
       return
     }
     encounterStartLock.current = true
     setStartingEncounter(true)
     setEncounterError(null)
-    setAppointmentSuccess(null)
+    setBookedAppointment(null)
     try {
       const result = await startEncounterContext({ p_clinic_id: clinicId, p_patient_id: patient.id })
       if (result.error) throw new Error(result.error.message)
-      if (!result.data) throw new Error('The encounter could not be confirmed. Retry Start New Visit.')
+      if (!result.data) throw new Error('The encounter could not be confirmed. Retry Book Appointment.')
       setEncounter(result.data)
       setPendingEncounter(result.data)
       setShowAppointmentForm(true)
-    } catch (failure) {
-      setEncounterError(failure instanceof Error ? failure.message : 'We could not start the visit. Retry to continue pending care.')
+    } catch {
+      setEncounterError('We could not prepare booking. Retry Book Appointment to continue.')
     } finally {
       encounterStartLock.current = false
       setStartingEncounter(false)
@@ -2439,15 +2589,28 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
 
   const unlinkedInvoices = invoices.filter((invoice) => !invoice.visit_id)
 
+  async function checkInBookedAppointment() {
+    if (!supabase || !bookedAppointment || checkingIn) return
+    setCheckingIn(true)
+    setEncounterError(null)
+    const { data, error } = await supabase.from('appointments').update({ status: 'arrived' } as never)
+      .eq('clinic_id', clinicId).eq('id', bookedAppointment.id).in('status', ['scheduled', 'confirmed']).select('*').single()
+    setCheckingIn(false)
+    if (error || !data) { setEncounterError('We could not check in this appointment. Open the appointment to review its current status.'); return }
+    setBookedAppointment(data as Appointment)
+  }
+  if (showAppointmentForm && encounter) return <AppointmentForm key={encounter.id} clinicId={clinicId} timezone={clinicTimezone} encounter={encounter} patient={patient} onCancel={() => { setShowAppointmentForm(false); setEncounterRefresh((version) => version + 1) }} onCreated={(appointment) => { setShowAppointmentForm(false); setEncounter(null); setPendingEncounter(null); setEncounterRefresh((version) => version + 1); setBookedAppointment(appointment) }} />
+  if (billingVisit && canViewFinance) return <InvoiceForm clinicId={clinicId} patient={patient} visit={billingVisit} onCancel={() => setBillingVisit(null)} onCreated={handleInvoiceCreated} />
+  if (bookedAppointment) return <section className="registration-panel"><h2>Appointment booked</h2><p>{patient.first_name} {patient.last_name} · File {patient.patient_number}</p><p>{formatDate(bookedAppointment.appointment_date)} · {formatTime(bookedAppointment.start_time)} · {formatStatus(bookedAppointment.status)}</p><div className="form-actions"><button type="button" onClick={() => onViewAppointment(bookedAppointment)}>View Appointment</button><button type="button" className="button-secondary" onClick={() => setBookedAppointment(null)}>View Patient</button>{canSchedule && bookedAppointment.appointment_date === todayInputValue(clinicTimezone) && ['scheduled', 'confirmed'].includes(bookedAppointment.status) && <button type="button" className="button-secondary" disabled={checkingIn} onClick={() => void checkInBookedAppointment()}>{checkingIn ? 'Checking in...' : 'Check In'}</button>}</div>{encounterError && <SoapSmileFeedback tone="error">{encounterError}</SoapSmileFeedback>}</section>
+
   return (
     <section className="profile-page">
       <button className="back-button" onClick={onBack} type="button">Back to patients</button>
       {!editing ? <>
-        <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button>{canSchedule && <button className="primary-action" disabled={startingEncounter || showAppointmentForm} onClick={() => void startOperationalVisit()} type="button">{startingEncounter ? 'Starting visit...' : pendingEncounter ? 'Continue Pending Visit' : 'Start New Visit'}</button>}{(role === 'admin' || role === 'doctor') && <button className="button-secondary profile-secondary-action" onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }} type="button">Record Standalone Clinical Visit</button>}</div></div>
+        <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button>{canSchedule && <button className="primary-action" disabled={startingEncounter || showAppointmentForm || encounterLoading} onClick={() => void startOperationalVisit()} type="button">{startingEncounter ? 'Preparing booking...' : 'Book Appointment'}</button>}{(role === 'admin' || role === 'doctor') && <details className="queue-action-menu"><summary>More Actions</summary><div><p>For clinical care recorded without an appointment.</p><button type="button" className="button-secondary" onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }}>Record Standalone Clinical Visit</button></div></details>}</div></div>
         <div className="profile-grid"><section className="profile-card"><p className="card-label">Personal details</p><dl className="detail-list"><DetailItem label="Full name" value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} /><DetailItem label="Gender" value={patient.gender} /><DetailItem label="Date of birth" value={formatDate(patient.date_of_birth)} /><DetailItem label="Age" value={formatPatientAge(patient)} /><DetailItem label="Registered" value={formatDate(patient.created_at)} /></dl></section><section className="profile-card"><p className="card-label">Contact details</p><dl className="detail-list"><DetailItem label="Phone" value={patient.phone} /><DetailItem label="Email" value={patient.email} /><DetailItem label="Address" value={patient.address} /></dl></section></div>
-        {canSchedule && <section className="encounter-pending-panel" aria-label="Operational pending care"><div className="section-heading"><div><p className="eyebrow">Care coordination</p><h3>New visit protocol</h3></div><button type="button" className="button-secondary inline-button" disabled={startingEncounter || encounterLoading} onClick={() => setEncounterRefresh((version) => version + 1)}>Refresh pending care</button></div><p className="encounter-protocol">Start New Visit / Book Appointment / Check-in / Waiting / Consultation</p><p>Starting a visit prepares care for this patient. Clinical history begins when the clinician records the consultation.</p>{encounterLoading && <SoapSmileLoadingState>Checking pending care...</SoapSmileLoadingState>}{!encounterLoading && pendingEncounter && <p>Unbooked care started {formatDateTime(pendingEncounter.created_at)}. Continue it to avoid starting another encounter.</p>}{encounterError && <SoapSmileFeedback tone="error">{encounterError}</SoapSmileFeedback>}</section>}
-        {showAppointmentForm && encounter && <AppointmentForm clinicId={clinicId} timezone={clinicTimezone} encounter={encounter} patient={patient} onCancel={() => { setShowAppointmentForm(false); setEncounterRefresh((version) => version + 1) }} onCreated={(appointment) => { setShowAppointmentForm(false); setEncounter(null); setPendingEncounter(null); setEncounterRefresh((version) => version + 1); setAppointmentSuccess('Appointment for this visit: ' + formatDate(appointment.appointment_date) + ' at ' + formatTime(appointment.start_time) + ' - ' + formatStatus(appointment.status) + '. Continue in Appointments for check-in and waiting.') }} />}
-        {appointmentSuccess && <SoapSmileFeedback tone="success">{appointmentSuccess}</SoapSmileFeedback>}
+        <PatientClinicalProfile key={`${clinicId}:${patient.id}:${userId}:${role}`} clinicId={clinicId} patient={patient} role={role} onUpdated={onUpdated} />
+        {encounterError && <SoapSmileFeedback tone="error">{encounterError}</SoapSmileFeedback>}
         {role === 'receptionist' && <p className="role-note">A doctor or clinic administrator must be signed in to create a clinical visit.</p>}
         {showVisitForm && <NewVisitForm clinicId={clinicId} patientId={patient.id} doctorId={userId} clinicianLabel={clinicianLabel} onCancel={() => setShowVisitForm(false)} onCreated={handleVisitCreated} />}
         {visitSuccess && <SoapSmileFeedback tone="success">{visitSuccess}</SoapSmileFeedback>}
@@ -2461,6 +2624,169 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
       </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}
     </section>
   )
+}
+
+const clinicalProfileFields: Array<{ field: ClinicalProfileField; label: string }> = [
+  { field: 'allergies', label: 'Allergies' },
+  { field: 'current_medications', label: 'Current medications' },
+  { field: 'medical_history', label: 'Medical history' },
+  { field: 'previous_surgery', label: 'Surgical history' },
+  { field: 'family_history', label: 'Family history' },
+  { field: 'dental_history', label: 'Dental history' },
+  { field: 'relevant_habits', label: 'Habits' },
+  { field: 'pregnancy_status', label: 'Pregnancy information' },
+]
+
+function ClinicalProfileValues({ profile }: { profile: Pick<Patient, ClinicalProfileField> }) {
+  return <dl className="detail-list">{clinicalProfileFields.map(({ field, label }) => <div key={field}><dt>{label}</dt><dd style={{ whiteSpace: 'pre-wrap' }}>{profile[field]?.trim() ? profile[field] : 'Not recorded'}</dd></div>)}</dl>
+}
+
+function PatientClinicalProfile({ clinicId, patient, role, onUpdated }: { clinicId: string; patient: Patient; role: UserRole; onUpdated: (patient: Patient) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState<Record<ClinicalProfileField, string>>(() => Object.fromEntries(clinicalProfileFields.map(({ field }) => [field, patient[field] ?? ''])) as Record<ClinicalProfileField, string>)
+  const [expectedVersion, setExpectedVersion] = useState(patient.clinical_profile_version)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [conflict, setConflict] = useState(false)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [history, setHistory] = useState<PatientClinicalProfileVersion[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyLimit, setHistoryLimit] = useState(50)
+  const [hasMoreHistory, setHasMoreHistory] = useState(false)
+  const [historyRefresh, setHistoryRefresh] = useState(0)
+  const mounted = useRef(true)
+  const saveLock = useRef(false)
+  const canRecord = ['admin', 'doctor', 'receptionist'].includes(role)
+
+  useUnsavedWorkspace(editing && clinicalProfileFields.some(({ field }) => form[field] !== (patient[field] ?? '')), saving)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  useEffect(() => {
+    if (!historyOpen || !canRecord) return
+    let cancelled = false
+    async function loadHistory() {
+      setHistoryLoading(true)
+      setHistoryError(null)
+      if (!supabase) { setHistoryError('Supabase is not configured.'); setHistoryLoading(false); return }
+      const result = await supabase.from('patient_clinical_profile_versions').select('*')
+        .eq('clinic_id', clinicId).eq('patient_id', patient.id).order('version_number', { ascending: false }).limit(historyLimit + 1)
+      if (cancelled) return
+      setHistoryLoading(false)
+      if (result.error) { setHistory([]); setHistoryError('We could not load profile history.'); return }
+      const rows = (result.data ?? []) as PatientClinicalProfileVersion[]
+      setHistory(rows.slice(0, historyLimit))
+      setHasMoreHistory(rows.length > historyLimit)
+    }
+    void loadHistory()
+    return () => { cancelled = true }
+  }, [canRecord, clinicId, patient.id, patient.clinical_profile_version, historyOpen, historyLimit, historyRefresh])
+
+  function beginEdit() {
+    setForm(Object.fromEntries(clinicalProfileFields.map(({ field }) => [field, patient[field] ?? ''])) as Record<ClinicalProfileField, string>)
+    setExpectedVersion(patient.clinical_profile_version)
+    setError(null)
+    setConflict(false)
+    setSuccess(null)
+    setEditing(true)
+  }
+
+  async function reloadLatest() {
+    if (!supabase || saveLock.current) return
+    saveLock.current = true
+    setSaving(true)
+    try {
+      const { data, error: reloadError } = await supabase.from('patients').select('*').eq('clinic_id', clinicId).eq('id', patient.id).single()
+      if (!mounted.current) return
+      if (reloadError || !data) { setError('We could not reload the clinical profile. Please try again.'); return }
+      onUpdated(data as Patient)
+      setEditing(false)
+      setConflict(false)
+      setError(null)
+      setSuccess('Latest clinical profile loaded. Review it before editing again.')
+      setHistoryRefresh((value) => value + 1)
+    } catch {
+      if (mounted.current) setError('We could not reload the clinical profile. Please try again.')
+    } finally {
+      saveLock.current = false
+      if (mounted.current) setSaving(false)
+    }
+  }
+
+  async function saveProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canRecord || saveLock.current || conflict) return
+    if (!supabase) { setError('Supabase is not configured.'); return }
+    saveLock.current = true
+    setSaving(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const result = await updatePatientClinicalProfile({
+        p_clinic_id: clinicId, p_patient_id: patient.id, p_expected_version: expectedVersion,
+        p_allergies: form.allergies, p_current_medications: form.current_medications,
+        p_medical_history: form.medical_history, p_previous_surgery: form.previous_surgery,
+        p_family_history: form.family_history, p_dental_history: form.dental_history,
+        p_relevant_habits: form.relevant_habits, p_pregnancy_status: form.pregnancy_status,
+      })
+      if (!mounted.current) return
+      if (result.error) {
+        if (result.error.code === 'P0022') {
+          setConflict(true)
+          setError('Another staff member updated the clinical profile. Reload and review the latest profile before saving. Reloading discards these unsaved changes.')
+        } else {
+          setError('We could not save the clinical profile. Your changes are still in the editor.')
+        }
+        return
+      }
+      if (!result.data) { setError('The saved clinical profile could not be confirmed. Reload the latest profile before editing again.'); setConflict(true); return }
+      const latest = await supabase.from('patients').select('*').eq('clinic_id', clinicId).eq('id', patient.id).single()
+      if (!mounted.current) return
+      onUpdated((latest.data ?? result.data) as Patient)
+      setEditing(false)
+      setSuccess(latest.error ? 'Clinical profile saved. The latest profile could not be reloaded; refresh before editing again.' : 'Clinical profile saved.')
+      setHistoryRefresh((value) => value + 1)
+    } catch {
+      if (mounted.current) {
+        setConflict(true)
+        setError('The save could not be confirmed. Reload and review the latest profile before trying again.')
+      }
+    } finally {
+      saveLock.current = false
+      if (mounted.current) setSaving(false)
+    }
+  }
+
+  return <section className="profile-card visit-history" aria-label="Patient clinical background">
+    <div className="section-heading"><h3>Current Clinical Profile</h3>{canRecord && !editing && <button type="button" className="button-secondary inline-button" onClick={beginEdit}>Edit Clinical Profile</button>}</div>
+    {!editing ? <ClinicalProfileValues profile={patient} /> : <form className="patient-form" onSubmit={(event) => void saveProfile(event)}>
+      {clinicalProfileFields.map(({ field, label }) => <label key={field} className="full-width">{label}<textarea value={form[field]} disabled={saving} rows={2} onChange={(event) => setForm((current) => ({ ...current, [field]: event.target.value }))} /></label>)}
+      <div className="form-actions"><button type="button" className="button-secondary" disabled={saving} onClick={() => { if (!confirmWorkspaceLeave()) return; setEditing(false); setError(null); setConflict(false) }}>Cancel</button><button type="submit" disabled={saving || conflict}>{saving ? 'Saving...' : 'Save clinical profile'}</button></div>
+    </form>}
+    {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+    {conflict && <button type="button" className="button-secondary inline-button" disabled={saving} onClick={() => void reloadLatest()}>Reload latest profile</button>}
+    {success && <SoapSmileFeedback tone="success">{success}</SoapSmileFeedback>}
+    {canRecord && <details open={historyOpen} onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
+      <summary>Profile History</summary>
+      {historyOpen && <>
+        <p>Previous clinical background is preserved. Expand a version to review its recorded state.</p>
+        {historyLoading && <SoapSmileLoadingState>Loading profile history...</SoapSmileLoadingState>}
+        {historyError && <><SoapSmileFeedback tone="error">{historyError}</SoapSmileFeedback><button type="button" className="button-secondary inline-button" onClick={() => setHistoryRefresh((value) => value + 1)}>Retry history</button></>}
+        {!historyLoading && !historyError && history.length === 0 && <p>No profile history available.</p>}
+        {!historyError && history.map((version) => <details key={version.id} className="profile-card">
+          <summary>Version {version.version_number} · {version.origin === 'legacy_baseline' ? 'Legacy baseline captured' : 'Recorded'} {formatDateTime(version.recorded_at)} · {version.origin === 'legacy_baseline' ? 'Original actor unknown' : version.actor_display_name || `Staff member (${version.recorded_by})`}</summary>
+          {version.origin === 'legacy_baseline' ? <p>Captured when version history began. The original recording date and actor are unknown.</p> : <p>{version.origin === 'created' ? 'Initial profile' : 'Changed fields'}: {version.changed_fields.map((field) => clinicalProfileFields.find((item) => item.field === field)?.label ?? field).join(', ') || 'Not recorded'}</p>}
+          <ClinicalProfileValues profile={version} />
+        </details>)}
+        {!historyLoading && !historyError && hasMoreHistory && <button type="button" className="button-secondary inline-button" onClick={() => setHistoryLimit((value) => value + 50)}>Show older versions</button>}
+      </>}
+    </details>}
+  </section>
 }
 
 type NewVisitFormValues = {
@@ -2483,6 +2809,9 @@ function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel,
   const [form, setForm] = useState<NewVisitFormValues>(initialVisitForm)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useUnsavedWorkspace(JSON.stringify(form) !== JSON.stringify(initialVisitForm), submitting)
+  const leave = () => { if (confirmWorkspaceLeave()) onCancel() }
 
   function updateField(field: keyof NewVisitFormValues, value: string) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -2528,7 +2857,7 @@ function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel,
         <label>Assessment<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label>
         <label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label>
         <label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label>
-        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving visit...</> : 'Save visit'}</button></div>
+        <div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving visit...</> : 'Save visit'}</button></div>
       </form>
       {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
@@ -2540,8 +2869,14 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const requestLock = useRef(false)
+  const [needsReview, setNeedsReview] = useState(false)
+  useUnsavedWorkspace(Boolean(total) && !needsReview, submitting)
+  const leave = () => { if (confirmWorkspaceLeave()) onCancel() }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (requestLock.current || needsReview) return
     const amount = Number(total)
     if (!Number.isFinite(amount) || amount <= 0) {
       setError('Enter an invoice total greater than zero.')
@@ -2551,29 +2886,40 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
       setError('Supabase is not configured.')
       return
     }
+    requestLock.current = true
     setSubmitting(true)
     setError(null)
-    const { data, error: createError } = await supabase.rpc('create_invoice', {
-      p_clinic_id: clinicId,
-      p_patient_id: patient.id,
-      p_visit_id: visit.id,
-      p_total: amount,
-    } as never)
-    setSubmitting(false)
-    if (createError || !data) {
-      setError('We could not create this invoice. Confirm that the visit is completed and try again.')
-      return
+    try {
+      const { data, error: createError } = await supabase.rpc('create_invoice', {
+        p_clinic_id: clinicId,
+        p_patient_id: patient.id,
+        p_visit_id: visit.id,
+        p_total: amount,
+      } as never)
+      if (createError || !data) {
+        setNeedsReview(true)
+        setError('The invoice could not be confirmed. Return to the patient billing history and refresh before trying again.')
+        return
+      }
+      onCreated(data as Invoice)
+    } catch {
+      setNeedsReview(true)
+      setError('The invoice could not be confirmed. Return to the patient billing history before retrying.')
+    } finally {
+      requestLock.current = false
+      setSubmitting(false)
     }
-    onCreated(data as Invoice)
   }
 
-  return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
+  return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><button type="button" className="back-button" disabled={submitting} onClick={leave}>← Back</button><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input disabled={submitting || needsReview} type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting || needsReview}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
 function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary }) {
   const [lifecycle, setLifecycle] = useState<StandaloneVisitLifecycle | null>(null)
+  const [procedureCount, setProcedureCount] = useState<number | null>(null)
   const [lifecycleError, setLifecycleError] = useState<string | null>(null)
   const [finalizing, setFinalizing] = useState(false)
+  useUnsavedWorkspace(false, finalizing)
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -2587,14 +2933,15 @@ function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, i
     return () => { cancelled = true }
   }, [clinicId, visit.id, visit.appointment_id])
   async function finalizeVisit() {
-    if (!supabase || finalizing) return
+    if (!supabase || finalizing || !confirmWorkspaceLeave()) return
+    if (!procedureCount) { setLifecycleError('Record at least one procedure or Consultation Only before closing this visit.'); return }
     setFinalizing(true)
     setLifecycleError(null)
     try {
       const result = await supabase.rpc('finalize_standalone_visit', { p_visit_id: visit.id } as never)
       if (result.error) throw result.error
       setLifecycle(result.data as StandaloneVisitLifecycle)
-    } catch { setLifecycleError('Finalization could not be confirmed. Refresh the patient file before retrying.') }
+    } catch (failure) { setLifecycleError((failure as { message?: string }).message || 'Finalization could not be confirmed. Refresh the patient file before retrying.') }
     finally { setFinalizing(false) }
   }
   const standaloneSaved = !visit.appointment_id && lifecycle?.state === 'saved'
@@ -2607,7 +2954,8 @@ function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, i
     <article className={`visit-card${isLatest ? ' latest' : ''}`}>
       <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Clinical author / assigned clinician: {clinicianLabel}</p></div><div className="visit-card-actions">{isLatest && <span className="latest-badge">Latest</span>}{onPrintVisitSummary && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianLabel, prescriptions, investigations)} type="button">Print Visit Summary</button>}</div></div>
       <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
-      {!visit.appointment_id && <div className="form-actions"><span>{lifecycle ? lifecycle.state === 'saved' ? 'Saved — unfinished' : 'Finalized' : 'Verifying standalone lifecycle...'}</span>{lifecycle?.legacy_baseline && <span>Historical finalization actor/time unknown</span>}{canFinalize && <button type="button" disabled={finalizing} onClick={() => void finalizeVisit()}>{finalizing ? 'Finalizing...' : 'Finalize standalone visit'}</button>}{lifecycleError && <SoapSmileFeedback tone="error">{lifecycleError}</SoapSmileFeedback>}</div>}
+      {!visit.appointment_id && <div className="form-actions"><span>{lifecycle ? lifecycle.state === 'saved' ? 'Saved — unfinished' : 'Finalized' : 'Verifying standalone lifecycle...'}</span>{lifecycle?.legacy_baseline && <span>Historical finalization actor/time unknown</span>}{canFinalize && <button type="button" disabled={finalizing || !procedureCount} onClick={() => void finalizeVisit()}>{finalizing ? 'Finalizing...' : 'Finalize standalone visit'}</button>}{lifecycleError && <SoapSmileFeedback tone="error">{lifecycleError}</SoapSmileFeedback>}</div>}
+      <VisitProcedures key={visit.id + ':' + (lifecycle?.state ?? 'appointment')} visit={visit} userId={userId} role={role} canCreate={standaloneSaved && canAddDentalEntries} disabled={finalizing} onCount={setProcedureCount} />
       <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
       {canViewDentalChart && userId && <DentalChart role={role} clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && standaloneSaved && !finalizing} />}
       {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && (Boolean(visit.appointment_id) || standaloneFinalized) && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <SoapSmileEmptyState><p>No invoice for this visit.</p></SoapSmileEmptyState> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && (Boolean(visit.appointment_id) || standaloneFinalized) && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
@@ -2679,16 +3027,33 @@ function PaymentConfirmation({ clinicName, patient, invoice, payment, onViewRece
   return <section className="receipt-panel"><div><span>Payment recorded</span><strong>{clinicName}</strong></div><p>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p><p>Invoice {invoice.invoice_number} · {formatMoney(payment.amount, invoice.currency)} via {formatStatus(payment.payment_method)}</p><p>{formatDateTime(payment.payment_date)} · Paid {formatMoney(invoice.amount_paid, invoice.currency)} · Current balance {formatMoney(invoice.balance, invoice.currency)}</p><button className="button-secondary inline-button" onClick={onViewReceipt} type="button">View Receipt</button></section>
 }
 
-function PrintableDocumentPreview({ document, onClose }: { document: PrintableDocument; onClose: () => void }) {
+function ReportPrintHost({ document, onDone }: { document: Extract<PrintableDocument, { type: 'report' }>; onDone: (value: null) => void }) {
+  useEffect(() => {
+    let secondFrame = 0
+    const finished = () => onDone(null)
+    window.addEventListener('afterprint', finished)
+    // React has committed the selected report. Allow layout to settle before
+    // native print preview switches to the isolated print stylesheet.
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => window.print())
+    })
+    return () => {
+      window.cancelAnimationFrame(firstFrame)
+      window.cancelAnimationFrame(secondFrame)
+      window.removeEventListener('afterprint', finished)
+    }
+  }, [document, onDone])
+  return <div className="report-print-host" aria-hidden="true"><ReportPrintDocument clinic={document.clinic} data={document.data} startDate={document.startDate} endDate={document.endDate} generatedAt={document.generatedAt} view={document.view} /></div>
+}
+
+function PrintableDocumentPreview({ document, onClose }: { document: Exclude<PrintableDocument, { type: 'report' }>; onClose: () => void }) {
   const title = document.type === 'receipt' ? 'Payment receipt' : 'Clinical visit summary'
 
   return <div className="print-preview-overlay" role="dialog" aria-modal="true" aria-label={title}>
     <div className="print-preview-toolbar"><strong>{title}</strong><div><button className="button-secondary" onClick={onClose} type="button">Close</button><button className="primary-action" onClick={() => window.print()} type="button">Print / Reprint</button></div></div>
     {document.type === 'receipt'
       ? <PaymentReceiptDocument clinic={document.clinic} patient={document.patient} invoice={document.invoice} payment={document.payment} />
-      : document.type === 'visit'
-        ? <VisitSummaryDocument clinic={document.clinic} patient={document.patient} visit={document.visit} clinicianName={document.clinicianName} prescriptions={document.prescriptions} investigations={document.investigations} standaloneState={document.standaloneState} />
-        : <ReportPrintDocument clinic={document.clinic} data={document.data} startDate={document.startDate} endDate={document.endDate} generatedAt={document.generatedAt} />}
+      : <VisitSummaryDocument clinic={document.clinic} patient={document.patient} visit={document.visit} clinicianName={document.clinicianName} prescriptions={document.prescriptions} investigations={document.investigations} standaloneState={document.standaloneState} />}
   </div>
 }
 
@@ -2744,7 +3109,7 @@ function ReportDataTable({ title, headers, rows, emptyMessage }: { title: string
   </section>
 }
 
-function ReportPrintDocument({ clinic, data, startDate, endDate, generatedAt }: { clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string }) {
+function ReportPrintDocument({ clinic, data, startDate, endDate, generatedAt, view }: { clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string; view: ReportView }) {
   const appointmentsByStatus = data.appointments.reduce<Record<string, number>>((counts, appointment) => {
     counts[appointment.status] = (counts[appointment.status] ?? 0) + 1
     return counts
@@ -2757,17 +3122,19 @@ function ReportPrintDocument({ clinic, data, startDate, endDate, generatedAt }: 
   const paymentTotals = Object.entries(data.paymentsByCurrency)
     .sort(([first], [second]) => first.localeCompare(second))
     .map(([currency, amount]) => formatMoney(amount, currency))
-  const generatedDate = formatDate(getClinicLocalDate(new Date(generatedAt), clinic.timezone))
+  const generatedDate = new Intl.DateTimeFormat(undefined, { timeZone: clinic.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(generatedAt)) + ' (' + clinic.timezone + ')'
 
   return <article className="print-document print-report">
+    <p className="print-soapsmile">SoapSmile</p>
     <PrintableClinicHeader clinic={clinic} />
-    <div className="print-document-heading"><div><p>Clinic operations</p><h1>CLINIC OPERATIONS REPORT</h1></div></div>
+    <div className="print-document-heading"><div><h1>{view === 'procedures' ? 'PROCEDURE ACTIVITY REPORT' : 'CLINIC OPERATIONS REPORT'}</h1></div></div>
     <div className="print-metadata-grid">
       <div><span>Report period</span><strong>{formatDate(startDate)} – {formatDate(endDate)}</strong></div>
       <div><span>Generated</span><strong>{generatedDate}</strong></div>
     </div>
+    {view === 'procedures' ? <ProcedureActivitySummary data={data.procedureActivity} print /> : <>
     <section className="print-report-section">
-      <h2>Summary</h2>
+      <h2>Clinic Operations Summary</h2>
       <div className="print-report-metrics">
         <div><span>Patient registrations</span><strong>{data.registrations}</strong></div>
         <div><span>Appointments</span><strong>{data.appointments.length}</strong></div>
@@ -2777,13 +3144,11 @@ function ReportPrintDocument({ clinic, data, startDate, endDate, generatedAt }: 
     </section>
     <ReportDataTable title="Appointment Status" headers={['Status', 'Appointments']} rows={Object.entries(appointmentsByStatus).sort(([first], [second]) => first.localeCompare(second)).map(([status, count]) => [formatStatus(status), String(count)])} emptyMessage="No appointments in this period." />
     <ReportDataTable title="Payments by Method and Currency" headers={['Method', 'Currency', 'Amount']} rows={paymentMethodRows} emptyMessage="No payments in this period." />
-    <section className="print-report-section">
-      <h2>Current Outstanding Balance</h2>
-      <p className="print-report-note">Current snapshot, not a historical balance for the selected dates.</p>
-      <ReportDataTable title="Outstanding balances" headers={['Currency', 'Balance']} rows={Object.entries(data.outstandingByCurrency).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => [currency, formatMoney(amount, currency)])} emptyMessage="No outstanding balances." />
-    </section>
+    <ReportDataTable title="Current Outstanding Balance" headers={['Currency', 'Balance']} rows={Object.entries(data.outstandingByCurrency).sort(([first], [second]) => first.localeCompare(second)).map(([currency, amount]) => [currency, formatMoney(amount, currency)])} emptyMessage="No outstanding balances." />
+    <p className="print-report-note">Outstanding balances are a current snapshot, not a historical balance for the selected dates.</p>
     <ReportDataTable title="Doctor Activity" headers={['Doctor', 'Appointments', 'Visits']} rows={data.doctorActivity.map((doctor) => [doctor.label, String(doctor.appointments), String(doctor.visits)])} emptyMessage="No doctor activity in this period." />
-    <footer className="print-document-footer">Report data is limited to the current clinic and existing Reports access.</footer>
+    </>}
+    <footer className="print-document-footer">SoapSmile · Report data is limited to the current clinic and existing Reports access.</footer>
   </article>
 }
 
@@ -2952,7 +3317,7 @@ function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: stri
   </>
 }
 
-function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defaultOpen = false }: { clinicId: string; visit: Visit | null; patientId?: string; userId: string; role?: UserRole; canCreate: boolean; defaultOpen?: boolean }) {
+function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defaultOpen = false, onActivityCount }: { clinicId: string; visit: Visit | null; patientId?: string; userId: string; role?: UserRole; canCreate: boolean; defaultOpen?: boolean; onActivityCount?: (count: number | null) => void }) {
   const chartPatientId = visit?.patient_id ?? patientId
   const [isOpen, setIsOpen] = useState(defaultOpen)
   const [entries, setEntries] = useState<DentalChartEntry[]>([])
@@ -2970,6 +3335,14 @@ function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defa
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  useUnsavedWorkspace(Boolean(finding || procedureText || notes || surfaces.length), saving)
+  const entryLock = useRef(false)
+  useEffect(() => {
+    const { chains, unverifiedEntries } = inspectDentalEntryChains(entries)
+    const unverified = new Set(unverifiedEntries.map((entry) => entry.tooth_number))
+    onActivityCount?.(loading || error ? null : chains.map((chain) => chain[chain.length - 1]).filter((entry) => entry.visit_id === visit?.id && !unverified.has(entry.tooth_number)).length)
+  }, [entries, onActivityCount, visit?.id, loading, error])
 
   useEffect(() => {
     if (!isOpen) return
@@ -3057,6 +3430,7 @@ function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defa
 
   async function saveEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (entryLock.current || !canCreate) return
     const trimmedFinding = finding.trim()
     const trimmedProcedure = procedureText.trim()
     if (selectedTooth === null || (!trimmedFinding && !trimmedProcedure)) {
@@ -3068,6 +3442,7 @@ function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defa
       return
     }
 
+    entryLock.current = true
     setSaving(true)
     setError(null)
     setMessage(null)
@@ -3082,6 +3457,7 @@ function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defa
       notes: notes.trim() || null,
       recorded_by: userId,
     } as never)
+    entryLock.current = false
     setSaving(false)
     if (insertError) {
       setError('We could not save this dental entry. Confirm the visit is open and try again.')
@@ -3208,6 +3584,7 @@ type AppointmentFormValues = {
   appointment_date: string
   start_time: string
   end_time: string
+  duration_minutes: string
   doctor_id: string
   service: string
   notes: string
@@ -3221,6 +3598,7 @@ const initialAppointmentForm: AppointmentFormValues = {
   appointment_date: '',
   start_time: '',
   end_time: '',
+  duration_minutes: '30',
   doctor_id: '',
   service: '',
   notes: '',
@@ -3250,15 +3628,23 @@ function AppointmentForm({ clinicId, timezone, encounter, patient, onCancel, onC
     }
   }, [clinicId])
 
+  useUnsavedWorkspace(Boolean(form.doctor_id || form.start_time || form.service || form.appointment_date !== todayInputValue(timezone) || form.duration_minutes !== '30'), submitting)
+  const leave = () => { if (confirmWorkspaceLeave()) onCancel() }
   function updateField(field: keyof AppointmentFormValues, value: string) {
-    setForm((current) => ({ ...current, [field]: value }))
+    setForm((current) => {
+      const next = { ...current, [field]: value }
+      const [hours, minutes] = next.start_time.split(':').map(Number)
+      const end = hours * 60 + minutes + Number(next.duration_minutes)
+      next.end_time = Number.isFinite(end) && end < 1440 ? String(Math.floor(end / 60)).padStart(2, '0') + ':' + String(end % 60).padStart(2, '0') : ''
+      return next
+    })
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (bookingLock.current) return
     if (!form.appointment_date || !form.start_time || !form.end_time || !form.doctor_id) {
-      setError('Appointment date, start time, end time, and doctor are required.')
+      setError('Choose a doctor, date, time and duration ending before midnight.')
       return
     }
     if (form.end_time <= form.start_time) {
@@ -3271,7 +3657,7 @@ function AppointmentForm({ clinicId, timezone, encounter, patient, onCancel, onC
     }
 
     if (encounter.patient_id !== patient.id || encounter.clinic_id !== clinicId) {
-      setError('This encounter does not match the selected patient and clinic.')
+      setError('The selected patient could not be verified. Return to the patient file and try again.')
       return
     }
     bookingLock.current = true
@@ -3291,7 +3677,7 @@ function AppointmentForm({ clinicId, timezone, encounter, patient, onCancel, onC
       })
     } catch {
       setSubmitting(false)
-      setError('We could not confirm the booking. Retry with this same encounter to recover an existing appointment safely.')
+      setError('We could not confirm the booking. Retry this booking to recover an existing appointment safely.')
       return
     } finally {
       bookingLock.current = false
@@ -3299,7 +3685,7 @@ function AppointmentForm({ clinicId, timezone, encounter, patient, onCancel, onC
     const { data: createdAppointment, error: insertError } = bookingResult
     setSubmitting(false)
     if (insertError) {
-      setError('Booking was not saved: ' + insertError.message + '. Retry using this same encounter.')
+      setError('We could not confirm this appointment. Retry this booking or return to the patient file to review appointments.')
       return
     }
     if (!createdAppointment) {
@@ -3310,20 +3696,18 @@ function AppointmentForm({ clinicId, timezone, encounter, patient, onCancel, onC
   }
 
   return (
-    <section className="registration-panel appointment-form-panel" aria-labelledby="book-appointment-heading">
-      <div className="registration-heading"><p className="eyebrow">Appointment booking</p><h2 id="book-appointment-heading">Book Appointment for This Visit</h2><p className="panel-copy">For {[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p></div>
+    <section className="registration-panel appointment-form-panel" aria-labelledby="book-appointment-heading"><button type="button" className="back-button" disabled={submitting} onClick={leave}>← Back</button>
+      <div className="registration-heading"><p className="eyebrow">Appointment booking</p><h2 id="book-appointment-heading">Book Appointment</h2><p className="panel-copy">For {[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · File {patient.patient_number}</p></div>
       {loadingDoctors && <SoapSmileLoadingState>Loading doctors...</SoapSmileLoadingState>}
       {!loadingDoctors && doctorError && <SoapSmileFeedback tone="error">{doctorError}</SoapSmileFeedback>}
-      {!loadingDoctors && !doctorError && <form className="patient-form" onSubmit={handleSubmit}>
+      {!loadingDoctors && !doctorError && <form className="patient-form" onSubmit={handleSubmit}><fieldset disabled={submitting} style={{ display: 'contents' }}>
         <label>Patient<input value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} readOnly /></label>
         <label>Doctor<select value={form.doctor_id} onChange={(event) => updateField('doctor_id', event.target.value)} required><option value="">Select doctor</option>{doctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}</select></label>
         <label>Appointment date<input type="date" min={todayInputValue(timezone)} value={form.appointment_date} onChange={(event) => updateField('appointment_date', event.target.value)} required /></label>
-        <label>Status<select value="scheduled" disabled><option value="scheduled">Scheduled</option></select></label>
-        <label>Start time<input type="time" value={form.start_time} onChange={(event) => updateField('start_time', event.target.value)} required /></label>
-        <label>End time<input type="time" value={form.end_time} onChange={(event) => updateField('end_time', event.target.value)} required /></label>
-        <label>Reason / service<input value={form.service} onChange={(event) => updateField('service', event.target.value)} /></label>
-        <label className="full-width">Notes<textarea value={form.notes} onChange={(event) => updateField('notes', event.target.value)} rows={3} /></label>
-        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Booking appointment...' : 'Save appointment'}</button></div>
+        <label>Time<input type="time" value={form.start_time} onChange={(event) => updateField('start_time', event.target.value)} required /></label>
+        <label>Duration<select value={form.duration_minutes} onChange={(event) => updateField('duration_minutes', event.target.value)}>{[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}</select></label>
+        <label>Reason (optional)<input value={form.service} onChange={(event) => updateField('service', event.target.value)} /></label>
+        </fieldset><div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Booking appointment...' : 'Book Appointment'}</button></div>
       </form>}
       {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>
@@ -3348,6 +3732,9 @@ function PatientEditForm({ clinicId, patient, onCancel, onSaved }: { clinicId: s
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useUnsavedWorkspace(Object.entries(form).some(([field, value]) => String(patient[field as keyof Patient] ?? '') !== value), submitting)
+  const leave = () => { if (confirmWorkspaceLeave()) onCancel() }
 
   function updateField(field: keyof PatientFormValues, value: string) {
     setForm((current) => ({
@@ -3424,7 +3811,7 @@ function PatientEditForm({ clinicId, patient, onCancel, onSaved }: { clinicId: s
         <label>Phone<input type="tel" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} autoComplete="tel" /></label>
         <label>Email<input type="email" value={form.email} onChange={(event) => updateField('email', event.target.value)} autoComplete="email" /></label>
         <label className="full-width">Address<input value={form.address} onChange={(event) => updateField('address', event.target.value)} autoComplete="street-address" /></label>
-        <div className="form-actions"><button className="button-secondary" onClick={onCancel} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving changes...</> : 'Save changes'}</button></div>
+        <div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? <><SoapSmileCompanion state="saving" />Saving changes...</> : 'Save changes'}</button></div>
       </form>
       {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
     </section>

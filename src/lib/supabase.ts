@@ -11,6 +11,7 @@ import type {
   Invoice,
   Investigation,
   Patient,
+  PatientClinicalProfileVersion,
   Payment,
   Prescription,
   Profile,
@@ -28,7 +29,8 @@ export interface Database {
       clinics: { Row: Clinic; Insert: Omit<Clinic, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Clinic> }
       profiles: { Row: Profile; Insert: Omit<Profile, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Profile> }
       clinic_memberships: { Row: ClinicMembership; Insert: Omit<ClinicMembership, 'created_at' | 'is_active'> & { is_active?: boolean }; Update: Partial<ClinicMembership> }
-      patients: { Row: Patient; Insert: Omit<Patient, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Patient> }
+      patient_clinical_profile_versions: { Row: PatientClinicalProfileVersion; Insert: never; Update: never }
+      patients: { Row: Patient; Insert: Omit<Patient, 'id' | 'created_at' | 'updated_at' | 'clinical_profile_version'>; Update: Partial<Omit<Patient, 'id' | 'clinic_id' | 'patient_number' | 'created_at' | 'updated_at' | 'clinical_profile_version' | 'allergies' | 'current_medications' | 'medical_history' | 'previous_surgery' | 'family_history' | 'dental_history' | 'relevant_habits' | 'pregnancy_status'>> }
       appointments: { Row: Appointment; Insert: never; Update: Partial<Appointment> }
       visits: { Row: Visit; Insert: Omit<Visit, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Visit> }
       dental_chart_entries: { Row: DentalChartEntry; Insert: Omit<DentalChartEntry, 'id' | 'created_at' | 'supersedes_entry_id' | 'correction_reason'>; Update: never }
@@ -40,6 +42,10 @@ export interface Database {
     }
     Views: Record<string, never>
     Functions: {
+      update_patient_clinical_profile: {
+        Args: { p_clinic_id: string; p_patient_id: string; p_expected_version: number; p_allergies: string | null; p_current_medications: string | null; p_medical_history: string | null; p_previous_surgery: string | null; p_family_history: string | null; p_dental_history: string | null; p_relevant_habits: string | null; p_pregnancy_status: string | null }
+        Returns: Patient
+      }
       finalize_standalone_visit: { Args: { p_visit_id: string }; Returns: StandaloneVisitLifecycle }
       start_encounter_context: {
         Args: { p_clinic_id: string; p_patient_id: string }
@@ -126,6 +132,12 @@ export const supabase: SupabaseClient<Database> | null = isConfigured()
   : null
 
 export type { SupabaseClient }
+
+type ClinicalProfileDatabase = { public: { Tables: Record<string, never>; Views: Record<string, never>; Functions: Pick<Database['public']['Functions'], 'update_patient_clinical_profile'> } }
+export function updatePatientClinicalProfile(args: Database['public']['Functions']['update_patient_clinical_profile']['Args']) {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  return (supabase as unknown as SupabaseClient<ClinicalProfileDatabase>).rpc('update_patient_clinical_profile', args)
+}
 
 // A bounded RPC schema keeps this workflow typed without changing legacy table typing.
 type DentalCorrectionDatabase = { public: { Tables: Record<string, never>; Views: Record<string, never>; Functions: Pick<Database['public']['Functions'], 'correct_dental_chart_entry'> } }
