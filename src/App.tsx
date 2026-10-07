@@ -7,11 +7,12 @@ import { effectiveRecord, latestCorrection, loadCorrections, readPages, pagedRes
 import { searchPatients } from './lib/patientSearch'
 import { useCorrections, correctionsChanged } from './lib/useCorrections'
 import './App.css'
-import { VisitProcedures, ProcedureCatalogSettings, ProcedureActivitySummary } from './Procedures'
+import { VisitProcedures, VisitProcedureSummary, ProcedureCatalogSettings, ProcedureActivitySummary } from './Procedures'
 import { procedureClient } from './lib/procedures'
 import type { ProcedureActivity } from './lib/procedures'
 import './SoapSmileWorkstation.css'
 import './SoapSmileThemes.css'
+import './ClinicalUsability.css'
 import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
 import { bookEncounterAppointment, correctDentalChartEntry, startEncounterContext, supabase, updatePatientClinicalProfile } from './lib/supabase'
 import { inspectDentalEntryChains } from './lib/odontogram'
@@ -295,6 +296,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
   const [patientToOpen, setPatientToOpen] = useState<Patient | null>(null)
   const [appointmentToOpen, setAppointmentToOpen] = useState<Appointment | null>(null)
   const [printableDocument, setPrintableDocument] = useState<PrintableDocument | null>(null)
+  const [clinicalContext, setClinicalContext] = useState<{ patient: Patient; visitId?: string } | null>(null)
   const [clinic, setClinic] = useState(context.clinic)
   const canViewFinance = context.membership.role === 'admin' || context.membership.role === 'receptionist'
   const canManageClinicSettings = context.membership.role === 'admin' && context.membership.is_active
@@ -311,6 +313,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
     if (!confirmWorkspaceLeave()) return
     setAppointmentToOpen(null)
     setPatientToOpen(patient)
+    setClinicalContext({ patient })
     setActiveModule('Patients')
   }
 
@@ -386,7 +389,7 @@ function ClinicShell({ context }: { context: MembershipContext }) {
       </aside>
       <section className="shell-content">
         <header className="topbar"><div><p className="topbar-kicker">{clinic.name}</p><p className="topbar-title">{activeModule}</p></div><div className="soap-topbar-actions"><SoapSmileThemeToggle theme={theme} onChange={changeTheme} /><div className="topbar-meta"><span className="status-indicator" /><SoapSmileIcon name="shield" />Secure session</div></div></header>
-        {activeModule === 'Odontogram' && canViewOdontogram ? <OdontogramWorkspace clinicId={clinic.id} userId={context.user.id} role={context.membership.role} /> : activeModule === 'Appointments' ? <AppointmentsView key={clinic.id} clinicId={clinic.id} timezone={clinic.timezone} initialAppointment={appointmentToOpen} onViewPatient={openPatientHistory} userId={context.user.id} role={context.membership.role} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} onViewPatient={openPatientHistory} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onViewAppointment={openAppointment} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView clinicId={clinic.id} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} clinicName={clinic.name} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} theme={theme} onThemeChange={changeTheme} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} onOpenBilling={() => navigateToModule('Billing')} onOpenAppointments={() => navigateToModule('Appointments')} />}
+        {activeModule === 'Odontogram' && canViewOdontogram ? <OdontogramWorkspace key={clinic.id} clinicId={clinic.id} userId={context.user.id} role={context.membership.role} initialContext={clinicalContext} onClinicalContext={setClinicalContext} /> : activeModule === 'Appointments' ? <AppointmentsView key={clinic.id} clinicId={clinic.id} timezone={clinic.timezone} initialAppointment={appointmentToOpen} onClinicalContext={setClinicalContext} onViewPatient={openPatientHistory} userId={context.user.id} role={context.membership.role} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Clinical Visits' ? <ClinicalVisitsView clinicId={clinic.id} onPrintVisitSummary={printVisitSummary} onViewPatient={openPatientHistory} onOpenPatients={() => navigateToModule('Patients')} /> : activeModule === 'Patients' ? <PatientsView clinicId={clinic.id} clinicName={clinic.name} clinicTimezone={clinic.timezone} userId={context.user.id} role={context.membership.role} clinicianLabel={context.user.email ?? context.membership.role} patientToOpen={patientToOpen} onClinicalContext={setClinicalContext} onViewAppointment={openAppointment} onViewReceipt={viewReceipt} onPrintVisitSummary={printVisitSummary} /> : activeModule === 'Prescriptions' ? <PrescriptionsView key={clinic.id} clinicId={clinic.id} userId={context.user.id} role={context.membership.role} initialContext={clinicalContext} onClinicalContext={setClinicalContext} onViewPatient={openPatientHistory} /> : activeModule === 'Investigations' ? <InvestigationsView key={clinic.id} clinicId={clinic.id} userId={context.user.id} role={context.membership.role} initialContext={clinicalContext} onClinicalContext={setClinicalContext} onViewPatient={openPatientHistory} /> : activeModule === 'Billing' && canViewFinance ? <BillingView clinicId={clinic.id} clinicName={clinic.name} currency={clinic.currency} onViewReceipt={viewReceipt} /> : activeModule === 'Reports' && canViewFinance ? <ReportsView clinicId={clinic.id} timezone={clinic.timezone} onPrintReport={printReport} /> : activeModule === 'Audit / Activity' && canManageClinicSettings ? <AuditActivityView clinicId={clinic.id} clinicName={clinic.name} /> : activeModule === 'Settings' && canManageClinicSettings ? <ClinicSettingsView clinic={clinic} onUpdated={setClinic} theme={theme} onThemeChange={changeTheme} /> : activeModule === 'Staff' && context.membership.role === 'admin' ? <StaffManagementView clinicId={clinic.id} userId={context.user.id} /> : <DashboardView clinicId={clinic.id} clinicName={clinic.name} timezone={clinic.timezone} role={context.membership.role} userId={context.user.id} onOpenPatients={() => navigateToModule('Patients')} onOpenBilling={() => navigateToModule('Billing')} onOpenAppointments={() => navigateToModule('Appointments')} />}
         <SoapSmileCompanionDock />
       </section>
     </main>
@@ -1461,7 +1464,90 @@ function PatientSearchField({ label, value, onChange, placeholder }: { label: st
   </div>
 }
 
-function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
+type ClinicalToolProps = { clinicId: string; userId: string; role: UserRole; initialContext?: { patient: Patient; visitId?: string } | null; onClinicalContext: (value: { patient: Patient; visitId?: string }) => void; onViewPatient: (patient: Patient) => void }
+
+function PrescriptionsView(props: ClinicalToolProps) {
+  return <div className="patients-page"><h1>Prescriptions</h1><ClinicalToolWorkspace {...props} kind="prescriptions" /><details className="clinical-more-details"><summary>Browse clinic prescription history</summary><PrescriptionHistoryView clinicId={props.clinicId} onViewPatient={props.onViewPatient} /></details></div>
+}
+function InvestigationsView(props: ClinicalToolProps) {
+  return <div className="patients-page"><h1>Investigations</h1><ClinicalToolWorkspace {...props} kind="investigations" /><details className="clinical-more-details"><summary>Browse clinic investigation history</summary><InvestigationHistoryView clinicId={props.clinicId} onViewPatient={props.onViewPatient} /></details></div>
+}
+
+function ClinicalToolWorkspace({ clinicId, userId, role, initialContext, onClinicalContext, onViewPatient, kind }: ClinicalToolProps & { kind: 'prescriptions' | 'investigations' }) {
+  const [patient, setPatient] = useState<Patient | null>(() => initialContext?.patient.clinic_id===clinicId ? initialContext.patient : null)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [patients, setPatients] = useState<Patient[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled=false
+    async function load() {
+      const result = await searchPatients(clinicId, search, page, 8)
+      if (!cancelled) { setPatients((result.data ?? []) as Patient[]); setTotal(result.count ?? 0); setError(result.error ? 'Patient search unavailable. Change the search or refresh this tool.' : null); setLoading(false) }
+    }
+    void load()
+    return () => { cancelled=true }
+  }, [clinicId, search, page])
+  return <section className="clinical-tool-workspace"><aside className="clinical-tool-finder"><PatientSearchField label="Search/select patient" value={search} onChange={(value) => { setLoading(true); setSearch(value); setPage(1) }} placeholder="File number, name, or phone" />
+    {loading && <p role="status">Searching patients...</p>}{error && <p role="alert">{error}</p>}
+    {!loading && !error && <><div className="clinical-tool-patients">{patients.map((row) => <button type="button" className="button-secondary" key={row.id} aria-pressed={patient?.id===row.id} onClick={() => { if (confirmWorkspaceLeave()) { setPatient(row); onClinicalContext({ patient: row }) } }}><strong>{row.first_name} {row.last_name}</strong><span>File {row.patient_number}</span></button>)}</div>{patients.length===0 && <p>No matching patients.</p>}<div className="form-actions"><button type="button" className="button-secondary" disabled={page===1} onClick={() => { setLoading(true); setPage(page-1) }}>Previous</button><span>Page {page}</span><button type="button" className="button-secondary" disabled={page*8>=total} onClick={() => { setLoading(true); setPage(page+1) }}>Next</button></div></>}
+  </aside><div className="clinical-tool-selected">{patient ? <PatientClinicalTool key={patient.id} clinicId={clinicId} patient={patient} userId={userId} role={role} kind={kind} initialVisitId={initialContext?.patient.id===patient.id ? initialContext.visitId : undefined} onClinicalContext={onClinicalContext} onViewPatient={onViewPatient} /> : <p>Select a patient, then choose an existing clinical visit.</p>}</div></section>
+}
+
+function PatientClinicalTool({ clinicId, patient, userId, role, kind, initialVisitId, onClinicalContext, onViewPatient }: { clinicId: string; patient: Patient; userId: string; role: UserRole; kind: 'prescriptions' | 'investigations'; initialVisitId?: string; onClinicalContext: ClinicalToolProps['onClinicalContext']; onViewPatient: ClinicalToolProps['onViewPatient'] }) {
+  const [visits, setVisits] = useState<Visit[]>([])
+  const [statuses, setStatuses] = useState<Record<string, AppointmentStatus>>({})
+  const [states, setStates] = useState<Record<string, StandaloneVisitLifecycle['state']>>({})
+  const [clinicians, setClinicians] = useState<Record<string, UserRole>>({})
+  const [visitId, setVisitId] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refresh, setRefresh] = useState(0)
+  useEffect(() => {
+    let cancelled=false
+    async function load() {
+      try {
+        if (!supabase) throw Error('Supabase unavailable')
+        const rows = await readPages(() => supabase!.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('visit_date', { ascending: false }).order('id')) as Visit[]
+        const appointmentIds=[...new Set(rows.flatMap((row) => row.appointment_id ? [row.appointment_id] : []))]
+        const standaloneIds=rows.filter((row) => !row.appointment_id).map((row) => row.id)
+        const doctorIds=[...new Set(rows.map((row) => row.doctor_id))]
+        const [appointments, lifecycle, memberships] = await Promise.all([
+          batchedResult(appointmentIds, (batch) => supabase!.from('appointments').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).in('id', batch).order('id')),
+          batchedResult(standaloneIds, (batch) => supabase!.from('standalone_visit_lifecycle').select('*').eq('clinic_id', clinicId).in('visit_id', batch).order('visit_id')),
+          batchedResult(doctorIds, (batch) => supabase!.from('clinic_memberships').select('*').eq('clinic_id', clinicId).eq('is_active', true).in('user_id', batch).order('user_id')),
+        ])
+        if (appointments.error || lifecycle.error || memberships.error) throw Error('Visit context unavailable')
+        const appointmentMap=Object.fromEntries(((appointments.data ?? []) as Appointment[]).map((row) => [row.id, row]))
+        const statusMap=Object.fromEntries(rows.flatMap((row) => row.appointment_id && appointmentMap[row.appointment_id]?.doctor_id===row.doctor_id ? [[row.appointment_id, appointmentMap[row.appointment_id].status]] : [])) as Record<string, AppointmentStatus>
+        const stateMap=Object.fromEntries(((lifecycle.data ?? []) as StandaloneVisitLifecycle[]).map((row) => [row.visit_id, row.state]))
+        const clinicianMap=Object.fromEntries(((memberships.data ?? []) as ClinicMembership[]).map((row) => [row.user_id, row.role]))
+        const eligible=(row: Visit) => (role==='admin' || (role==='doctor' && row.doctor_id===userId)) && (row.appointment_id ? statusMap[row.appointment_id]==='in_progress' && clinicianMap[row.doctor_id]==='doctor' : stateMap[row.id]==='saved' && (clinicianMap[row.doctor_id]==='doctor' || (role==='admin' && row.doctor_id===userId && clinicianMap[row.doctor_id]==='admin')))
+        if (cancelled) return
+        setVisits(rows); setStatuses(statusMap); setStates(stateMap); setClinicians(clinicianMap); setError(null); setLoading(false)
+        setVisitId((current) => rows.some((row) => row.id===current) ? current : rows.find((row) => row.id===initialVisitId)?.id ?? rows.find(eligible)?.id ?? rows[0]?.id ?? '')
+      } catch { if (!cancelled) { setError('Clinical visit context could not be checked. Refresh before recording.'); setLoading(false) } }
+    }
+    void load()
+    return () => { cancelled=true }
+  }, [clinicId, patient.id, userId, role, refresh, initialVisitId])
+  const visit=visits.find((row) => row.id===visitId)
+  const state=visit ? visit.appointment_id ? statuses[visit.appointment_id] : states[visit.id] : undefined
+  const authorized=Boolean(visit && (role==='admin' || (role==='doctor' && visit.doctor_id===userId)))
+  const activeAuthor=Boolean(visit && (clinicians[visit.doctor_id]==='doctor' || (!visit.appointment_id && role==='admin' && visit.doctor_id===userId && clinicians[visit.doctor_id]==='admin')))
+  const canCreate=authorized && activeAuthor && (state==='in_progress' || state==='saved')
+  return <><div className="section-heading"><div><h2>{patient.first_name} {patient.last_name}</h2><p>File {patient.patient_number}</p></div><button type="button" className="button-secondary" disabled={loading} onClick={() => { if (confirmWorkspaceLeave()) { setLoading(true); setRefresh(refresh+1) } }}>Refresh visit context</button></div>
+    {loading && <p role="status">Checking existing visits...</p>}{error && <p role="alert">{error}</p>}
+    {!loading && !error && <>{visits.length ? <label>Existing clinical visit<select value={visitId} onChange={(event) => { if (confirmWorkspaceLeave()) { setVisitId(event.target.value); onClinicalContext({ patient, visitId: event.target.value }) } }}>{visits.map((row) => <option key={row.id} value={row.id}>{formatDateTime(row.visit_date)} | {row.appointment_id ? statuses[row.appointment_id] ? formatStatus(statuses[row.appointment_id]) : 'Status unavailable' : states[row.id] ? formatStatus(states[row.id]) : 'Status unavailable'}{row.doctor_id===userId ? ' - Your visit' : ''}</option>)}</select></label> : <p>No clinical visit exists. Book an appointment from the patient file; this tool does not create a visit.</p>}
+      {visit && <><p className="role-note">{canCreate ? 'Record another item in this active visit. Each save is an independent record.' : !authorized ? 'Review only: recording requires the assigned doctor or an active clinic administrator.' : !activeAuthor ? 'Review only: the clinical author is not active in an eligible role.' : state==='completed' || state==='finalized' ? 'Completed history is immutable. Use correction actions with a reason; ordinary additions are unavailable.' : 'Review only: ordinary recording requires an in-progress consultation or saved unfinished standalone visit.'}</p><VisitClinicalRecordsPanel key={visit.id} clinicId={clinicId} patientId={patient.id} visitId={visit.id} doctorId={visit.doctor_id} activeSection={kind} disabled={!canCreate} userId={userId} role={role} /></>}
+      <button type="button" className="button-secondary" onClick={() => onViewPatient(patient)}>View patient and full correction history</button>
+    </>}
+  </>
+}
+
+function PrescriptionHistoryView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
   const [recordPage,setRecordPage] = useState(1)
@@ -1535,7 +1621,7 @@ function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onVi
   </div>
 }
 
-function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
+function InvestigationHistoryView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
   const [recordPage,setRecordPage] = useState(1)
@@ -1611,7 +1697,7 @@ function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onV
 type AppointmentView = 'upcoming' | 'today' | 'waiting' | 'active'
 type QueueExitStatus = 'cancelled' | 'no_show'
 
-function AppointmentsView({ clinicId, timezone, initialAppointment, onViewPatient, userId, role, onOpenPatients }: { clinicId: string; timezone: string; initialAppointment: Appointment | null; onViewPatient: (patient: Patient) => void; userId: string; role: UserRole; onOpenPatients: () => void }) {
+function AppointmentsView({ clinicId, timezone, initialAppointment, onViewPatient, userId, role, onOpenPatients, onClinicalContext }: { clinicId: string; timezone: string; initialAppointment: Appointment | null; onViewPatient: (patient: Patient) => void; userId: string; role: UserRole; onOpenPatients: () => void; onClinicalContext: (value: { patient: Patient; visitId?: string }) => void }) {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [waitingAppointments, setWaitingAppointments] = useState<Appointment[]>([])
   const [patients, setPatients] = useState<Record<string, Patient>>({})
@@ -1679,6 +1765,7 @@ function AppointmentsView({ clinicId, timezone, initialAppointment, onViewPatien
     }
   }, [clinicId, timezone, refreshVersion])
 
+  useEffect(() => { if (activeConsultation) onClinicalContext({ patient: activeConsultation.patient, visitId: activeConsultation.visit.id }) }, [activeConsultation, onClinicalContext])
   const today = todayInputValue(timezone)
   const todayAppointments = appointments.filter((appointment) => appointment.appointment_date === today)
   const activeAppointments = waitingAppointments.filter((appointment) => appointment.status === 'in_progress' && (role === 'admin' || appointment.doctor_id === userId))
@@ -1923,7 +2010,7 @@ function ConsultationPanel({ appointment, patient, visit, userId, role, clinicia
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    await saveDraft()
+    if (await saveDraft()) setSection('procedures')
   }
 
   async function completeConsultation() {
@@ -1958,10 +2045,20 @@ function ConsultationPanel({ appointment, patient, visit, userId, role, clinicia
     <div className="profile-header"><div><p className="eyebrow">Consultation</p><h2 id="consultation-heading">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p>File {patient.patient_number} · {formatDate(appointment.appointment_date)} {formatTime(appointment.start_time)} · {clinicianLabel} · In progress</p></div><button type="button" disabled={saving || completing} onClick={() => setSection('review')}>Review & Close Visit</button></div>
     <details className="profile-card"><summary>Current Clinical Profile</summary><ClinicalProfileValues profile={patient} /></details>
     <div className="appointment-tabs" role="tablist" aria-label="Consultation sections">{([['notes', 'Consultation'], ['procedures', 'Procedures'], ['dental', 'Dental Chart'], ['prescriptions', 'Prescriptions (' + recordCounts.prescriptions + ')'], ['investigations', 'Investigations (' + recordCounts.investigations + ')'], ['review', 'Review']] as const).map(([key, label]) => <button type="button" key={key} id={'consultation-tab-' + key} aria-controls={'consultation-section-' + key} role="tab" aria-selected={section === key} className={section === key ? 'active' : ''} onClick={() => setSection(key)}>{label}</button>)}</div>
-    <div id="consultation-section-notes" role="tabpanel" aria-labelledby="consultation-tab-notes" hidden={section !== 'notes'} className="registration-panel"><form className="patient-form" onSubmit={handleSubmit}><fieldset disabled={saving || completing} style={{ display: 'contents' }}><label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label><label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={3} /></label><label>Examination<textarea value={form.examination} onChange={(event) => updateField('examination', event.target.value)} rows={3} /></label><label>Assessment / diagnosis<textarea value={form.assessment} onChange={(event) => updateField('assessment', event.target.value)} rows={3} /></label><label>Treatment plan<textarea value={form.treatment_plan} onChange={(event) => updateField('treatment_plan', event.target.value)} rows={3} /></label><label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label><label className="full-width">Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={3} /></label><label className="full-width">Clinical notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={4} /></label></fieldset><div className="form-actions"><button className="button-secondary" disabled={saving || completing} onClick={() => { void saveDraft() }} type="button">{saving ? <><SoapSmileCompanion state="saving" />Saving...</> : 'Save Notes'}</button><button type="button" disabled={saving || completing} onClick={() => setSection('review')}>Review & Close Visit</button></div></form></div>
-    <div id="consultation-section-procedures" role="tabpanel" aria-labelledby="consultation-tab-procedures" hidden={section !== 'procedures'}><VisitProcedures visit={visit} userId={userId} role={role} canCreate disabled={saving || completing} onCount={setProcedureCount} /></div>
-    <div id="consultation-section-dental" role="tabpanel" aria-labelledby="consultation-tab-dental" hidden={section !== 'dental'}><DentalChart clinicId={visit.clinic_id} visit={visit} userId={userId} role={role} canCreate={!saving && !completing} defaultOpen onActivityCount={setDentalCount} /></div>
-    <div hidden={section !== 'prescriptions' && section !== 'investigations'}><VisitClinicalRecordsPanel clinicId={visit.clinic_id} patientId={visit.patient_id} visitId={visit.id} doctorId={visit.doctor_id} disabled={saving || completing} activeSection={section === 'investigations' ? 'investigations' : 'prescriptions'} onCounts={setRecordCounts} /></div>
+    <div id="consultation-section-notes" role="tabpanel" aria-labelledby="consultation-tab-notes" hidden={section !== 'notes'} className="registration-panel compact-consultation">
+      <form className="patient-form" onSubmit={handleSubmit}><fieldset disabled={saving || completing} style={{ display: 'contents' }}>
+        {([['chief_complaint', 'Chief complaint'], ['examination', 'Findings / Examination'], ['assessment', 'Assessment / Diagnosis'], ['treatment_plan', 'Treatment plan']] as const).map(([field, label]) => <label key={field}>{label}<textarea value={form[field]} onChange={(event) => updateField(field, event.target.value)} rows={2} /></label>)}
+        <details className="clinical-more-details full-width"><summary>More clinical details{[form.hpi, form.follow_up_date, form.follow_up_instructions, form.clinical_notes].some(Boolean) ? ' - Saved or entered details' : ''}</summary><div className="patient-form">
+          <label>History of present illness<textarea value={form.hpi} onChange={(event) => updateField('hpi', event.target.value)} rows={2} /></label>
+          <label>Clinical Notes<textarea value={form.clinical_notes} onChange={(event) => updateField('clinical_notes', event.target.value)} rows={2} /></label>
+          <label>Follow-up date<input type="date" value={form.follow_up_date} onChange={(event) => updateField('follow_up_date', event.target.value)} /></label>
+          <label>Follow-up instructions<textarea value={form.follow_up_instructions} onChange={(event) => updateField('follow_up_instructions', event.target.value)} rows={2} /></label>
+        </div></details>
+      </fieldset><div className="form-actions"><button disabled={saving || completing} type="submit">{saving ? 'Saving...' : 'Save consultation'}</button>{message && <button type="button" className="button-secondary" onClick={() => setSection('procedures')}>Continue to Procedures</button>}<button type="button" className="button-secondary" disabled={saving || completing} onClick={() => setSection('review')}>Review & Close Visit</button></div></form>
+    </div>
+    <div id="consultation-section-procedures" role="tabpanel" aria-labelledby="consultation-tab-procedures" hidden={section !== 'procedures'}><VisitProcedures visit={visit} userId={userId} role={role} canCreate disabled={saving || completing} onCount={setProcedureCount} onContinue={() => setSection('review')} /></div>
+    <div id="consultation-section-dental" role="tabpanel" aria-labelledby="consultation-tab-dental" hidden={section !== 'dental'}><p className="role-note">Optional: expand the chart when tooth documentation is needed.</p><DentalChart clinicId={visit.clinic_id} visit={visit} userId={userId} role={role} canCreate={!saving && !completing} onActivityCount={setDentalCount} /></div>
+    <div hidden={section !== 'prescriptions' && section !== 'investigations'}><VisitClinicalRecordsPanel clinicId={visit.clinic_id} patientId={visit.patient_id} visitId={visit.id} doctorId={visit.doctor_id} disabled={saving || completing} activeSection={section === 'investigations' ? 'investigations' : 'prescriptions'} onCounts={setRecordCounts} onContinue={() => setSection('review')} /></div>
     {section === 'review' && <section className="profile-card" id="consultation-section-review" role="tabpanel" aria-labelledby="consultation-tab-review"><h3>Review & Close Visit</h3><dl className="detail-list"><DetailItem label="Procedures performed (required)" value={procedureCount === null ? 'Not yet verified; open Procedures and refresh' : procedureCount === 0 ? 'Record at least one procedure or Consultation Only' : procedureCount + ' effective procedure record(s)'} /><DetailItem label="Notes / findings" value={[form.chief_complaint, form.examination, form.assessment, form.clinical_notes].some((value) => value.trim()) ? 'Recorded in this consultation; current notes will be saved on close.' : 'Not recorded'} /><DetailItem label="Dental chart" value={dentalCount === null ? 'Activity not yet verified; review Dental Chart if needed.' : dentalCount + ' saved entries for this visit'} /><DetailItem label="Prescriptions" value={recordCounts.verified ? String(recordCounts.prescriptions) : 'Records not yet verified'} /><DetailItem label="Investigations" value={recordCounts.verified ? String(recordCounts.investigations) : 'Records not yet verified'} /><DetailItem label="Billing" value="Invoice creation is available after clinical closure to reception or an administrator." /></dl><p>At least one structured procedure or Consultation Only is required. Other records remain optional. Closing saves notes and prevents ordinary additions.</p>{(procedureCount === null || procedureCount === 0) && <button type="button" className="button-secondary" onClick={() => setSection('procedures')}>+ Record Procedure</button>}<div className="form-actions"><button type="button" className="button-secondary" onClick={() => setSection('notes')} disabled={completing}>Back to consultation</button><button type="button" disabled={saving || completing || procedureCount === null || procedureCount === 0} onClick={() => void completeConsultation()}>{completing ? 'Closing visit...' : 'Close Visit'}</button></div></section>}
     {message && <SoapSmileFeedback tone="success">{message}</SoapSmileFeedback>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
   </section>
@@ -1987,7 +2084,7 @@ type InvestigationFormValues = {
 const initialPrescriptionForm: PrescriptionFormValues = { medicine: '', strength: '', dose: '', route: '', frequency: '', duration: '', quantity: '', instructions: '' }
 const initialInvestigationForm: InvestigationFormValues = { investigation_type: '', status: '', notes: '' }
 
-function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, disabled, activeSection, onCounts }: { clinicId: string; patientId: string; visitId: string; doctorId: string; disabled: boolean; activeSection?: 'prescriptions' | 'investigations'; onCounts?: (counts: { prescriptions: number; investigations: number; verified: boolean }) => void }) {
+function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, disabled, activeSection, onCounts, onContinue, userId, role }: { clinicId: string; patientId: string; visitId: string; doctorId: string; disabled: boolean; activeSection?: 'prescriptions' | 'investigations'; onCounts?: (counts: { prescriptions: number; investigations: number; verified: boolean }) => void; onContinue?: () => void; userId?: string; role?: UserRole }) {
   const correctionState=useCorrections(clinicId,visitId)
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [investigations, setInvestigations] = useState<Investigation[]>([])
@@ -1998,8 +2095,14 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
   const [error, setError] = useState<string | null>(null)
 
   useUnsavedWorkspace(JSON.stringify(prescriptionForm) !== JSON.stringify(initialPrescriptionForm) || JSON.stringify(investigationForm) !== JSON.stringify(initialInvestigationForm), saving)
+  const [recordRefresh, setRecordRefresh] = useState(0)
+  const [savedKind, setSavedKind] = useState<'prescriptions' | 'investigations' | null>(null)
+  const medicineInput = useRef<HTMLInputElement>(null)
+  const requestInput = useRef<HTMLInputElement>(null)
   const recordLock = useRef(false)
-  useEffect(() => { onCounts?.({ prescriptions: prescriptions.length, investigations: investigations.length, verified: !loading && !error }) }, [onCounts, prescriptions.length, investigations.length, loading, error])
+  const effectivePrescriptionCount = prescriptions.filter((row) => effectiveRecord(row, correctionState.rows, 'prescription')).length
+  const effectiveInvestigationCount = investigations.filter((row) => effectiveRecord(row, correctionState.rows, 'investigation')).length
+  useEffect(() => { onCounts?.({ prescriptions: effectivePrescriptionCount, investigations: effectiveInvestigationCount, verified: !loading && !error && !correctionState.loading && !correctionState.error }) }, [onCounts, effectivePrescriptionCount, effectiveInvestigationCount, loading, error, correctionState.loading, correctionState.error])
 
   useEffect(() => {
     let cancelled = false
@@ -2024,7 +2127,7 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
     }
     void loadRecords()
     return () => { cancelled = true }
-  }, [clinicId, visitId])
+  }, [clinicId, visitId, recordRefresh])
 
   async function addPrescription(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -2058,6 +2161,8 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
     }
     setPrescriptions((current) => [...current, data as Prescription])
     setPrescriptionForm(initialPrescriptionForm)
+    setSavedKind('prescriptions')
+    medicineInput.current?.focus()
   }
 
   async function addInvestigation(event: React.FormEvent<HTMLFormElement>) {
@@ -2087,9 +2192,38 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
     }
     setInvestigations((current) => [...current, data as Investigation])
     setInvestigationForm(initialInvestigationForm)
+    setSavedKind('investigations')
+    requestInput.current?.focus()
   }
 
-  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>{activeSection === 'prescriptions' ? 'Prescriptions' : activeSection === 'investigations' ? 'Investigations' : 'Prescriptions and investigations'}</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <SoapSmileLoadingState>Loading visit records...</SoapSmileLoadingState>}{!loading && !correctionState.loading && !correctionState.error && <div className="clinical-records-grid" style={activeSection ? { gridTemplateColumns: '1fr' } : undefined}><section id={activeSection ? 'consultation-section-prescriptions' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-prescriptions' : undefined} hidden={activeSection === 'investigations'}><h4>Prescriptions</h4>{prescriptions.length === 0 ? <SoapSmileEmptyState><p>No prescriptions recorded.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{prescriptions.map((original) => { const prescription=effectiveRecord(original,correctionState.rows,'prescription'); return prescription ? <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article> : <article key={original.id}>Withdrawn prescription - see patient history</article> })}</div>}<form className="record-form" onSubmit={addPrescription}><input aria-label="Medicine" placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Strength" placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled || saving} /><input aria-label="Dose" placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled || saving} /><input aria-label="Route" placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled || saving} /><input aria-label="Frequency" placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled || saving} /><input aria-label="Duration" placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled || saving} /><input type="number" min="0" step="any" aria-label="Quantity" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled || saving} /><input aria-label="Instructions" placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled || saving} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add prescription'}</button></form></section><section id={activeSection ? 'consultation-section-investigations' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-investigations' : undefined} hidden={activeSection === 'prescriptions'}><h4>Investigations</h4>{investigations.length === 0 ? <SoapSmileEmptyState><p>No investigations requested.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{investigations.map((original) => { const investigation=effectiveRecord(original,correctionState.rows,'investigation'); return investigation ? <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article> : <article key={original.id}>Withdrawn request - see patient history</article> })}</div>}<form className="record-form" onSubmit={addInvestigation}><input aria-label="Investigation type" placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Status" placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled || saving} /><textarea aria-label="Notes" placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled || saving} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add investigation'}</button></form></section></div>}{correctionState.error && <p role="alert">{correctionState.error}</p>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
+  const currentPrescriptions = prescriptions.map((row) => effectiveRecord(row, correctionState.rows, 'prescription')).filter((row): row is Prescription => Boolean(row))
+  const currentInvestigations = investigations.map((row) => effectiveRecord(row, correctionState.rows, 'investigation')).filter((row): row is Investigation => Boolean(row))
+  return <section className="clinical-records-panel compact-clinical-panel">
+    <div className="section-heading"><h3>{activeSection === 'prescriptions' ? 'Prescriptions' : activeSection === 'investigations' ? 'Investigations' : 'Visit records'}</h3><span>{currentPrescriptions.length + currentInvestigations.length} effective records</span><button type="button" className="button-secondary" disabled={saving || loading} onClick={() => { if (confirmWorkspaceLeave()) { setPrescriptionForm(initialPrescriptionForm); setInvestigationForm(initialInvestigationForm); setSavedKind(null); setError(null); setLoading(true); correctionsChanged(); setRecordRefresh((value) => value+1) } }}>Refresh records</button></div>
+    {loading && <SoapSmileLoadingState>Loading visit records...</SoapSmileLoadingState>}
+    {!loading && !error && !correctionState.loading && !correctionState.error && <div className="clinical-records-grid" style={activeSection ? { gridTemplateColumns: '1fr' } : undefined}>
+      <section id={activeSection && onCounts ? 'consultation-section-prescriptions' : undefined} role={activeSection && onCounts ? 'tabpanel' : undefined} aria-labelledby={activeSection && onCounts ? 'consultation-tab-prescriptions' : undefined} hidden={activeSection === 'investigations'}>
+        {currentPrescriptions.length === 0 && <p>No active prescriptions recorded.</p>}
+        <div className="compact-record-list">{prescriptions.map((original) => { const row=effectiveRecord(original, correctionState.rows, 'prescription'); return <article key={original.id}><strong>{row?.medicine ?? original.medicine}</strong><span>{row ? [row.dose, row.frequency, row.duration].filter(Boolean).join(' / ') : 'Withdrawn - retained in history'}</span><details><summary>Details / correction history</summary><VisitRecordsSummary prescriptions={row ? [row] : []} investigations={[]} /><ClinicalCorrectionAction kind="prescription" record={original} rows={correctionState.rows} authorId={doctorId} userId={userId} role={role} onSaved={correctionsChanged} /><CorrectionHistory original={original} rows={correctionState.rows.filter((event) => event.kind==='prescription' && event.record_id===original.id)} /></details></article> })}</div>
+        {!disabled && <form className="record-form compact-entry-form" onSubmit={addPrescription}><fieldset disabled={saving} style={{ display: 'contents' }}>
+          {(['medicine', 'dose', 'frequency', 'duration'] as const).map((field) => <label key={field}>{field[0].toUpperCase() + field.slice(1)}<input ref={field==='medicine' ? medicineInput : undefined} required={field==='medicine'} value={prescriptionForm[field]} onChange={(event) => setPrescriptionForm((current) => ({ ...current, [field]: event.target.value }))} /></label>)}
+          <details className="clinical-more-details full-width"><summary>More details</summary><div className="patient-form">{(['strength', 'route', 'quantity', 'instructions'] as const).map((field) => <label key={field}>{field[0].toUpperCase() + field.slice(1)}<input type={field==='quantity' ? 'number' : 'text'} min={field==='quantity' ? '0' : undefined} step={field==='quantity' ? 'any' : undefined} value={prescriptionForm[field]} onChange={(event) => setPrescriptionForm((current) => ({ ...current, [field]: event.target.value }))} /></label>)}</div></details>
+          <div className="form-actions"><button type="submit">{saving ? 'Saving...' : 'Save drug'}</button>{savedKind==='prescriptions' && <><button type="button" className="button-secondary" onClick={() => medicineInput.current?.focus()}>+ Add another drug</button>{onContinue && <button type="button" className="button-secondary" onClick={onContinue}>Continue to Review</button>}</>}</div>
+        </fieldset></form>}
+      </section>
+      <section id={activeSection && onCounts ? 'consultation-section-investigations' : undefined} role={activeSection && onCounts ? 'tabpanel' : undefined} aria-labelledby={activeSection && onCounts ? 'consultation-tab-investigations' : undefined} hidden={activeSection === 'prescriptions'}>
+        {currentInvestigations.length === 0 && <p>No active investigation requests.</p>}
+        <div className="compact-record-list">{investigations.map((original) => { const row=effectiveRecord(original, correctionState.rows, 'investigation'); return <article key={original.id}><strong>{row?.investigation_type ?? original.investigation_type}</strong><span>{row?.status ?? (row ? 'Requested' : 'Withdrawn - retained in history')}</span><details><summary>Details / correction history</summary><VisitRecordsSummary prescriptions={[]} investigations={row ? [row] : []} /><ClinicalCorrectionAction kind="investigation" record={original} rows={correctionState.rows} authorId={doctorId} userId={userId} role={role} onSaved={correctionsChanged} /><CorrectionHistory original={original} rows={correctionState.rows.filter((event) => event.kind==='investigation' && event.record_id===original.id)} /></details></article> })}</div>
+        {!disabled && <form className="record-form compact-entry-form" onSubmit={addInvestigation}><fieldset disabled={saving} style={{ display: 'contents' }}>
+          <label className="full-width">Investigation request<input ref={requestInput} required value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} /></label>
+          <details className="clinical-more-details full-width"><summary>More details</summary><div className="patient-form"><label>Status<input value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} /></label><label>Notes<textarea rows={2} value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} /></label></div></details>
+          <div className="form-actions"><button type="submit">{saving ? 'Saving...' : 'Save request'}</button>{savedKind==='investigations' && <><button type="button" className="button-secondary" onClick={() => requestInput.current?.focus()}>+ Add another request</button>{onContinue && <button type="button" className="button-secondary" onClick={onContinue}>Continue to Review</button>}</>}</div>
+        </fieldset></form>}
+      </section>
+    </div>}
+    {savedKind && <p role="status">{savedKind==='prescriptions' ? 'Drug saved. Add another drug or continue.' : 'Request saved. Add another request or continue.'}</p>}
+    {correctionState.error && <p role="alert">{correctionState.error}</p>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+  </section>
 }
 
 type PatientFormValues = {
@@ -2116,7 +2250,7 @@ const initialPatientForm: PatientFormValues = {
   address: '',
 }
 
-function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patientToOpen, onViewAppointment, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null; onViewAppointment: (appointment: Appointment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
+function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patientToOpen, onViewAppointment, onViewReceipt, onPrintVisitSummary, onClinicalContext }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patientToOpen: Patient | null; onClinicalContext: (value: { patient: Patient; visitId?: string }) => void; onViewAppointment: (appointment: Appointment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -2164,6 +2298,7 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
 
   const visiblePatients = patients
 
+  useEffect(() => { if (selectedPatient) onClinicalContext({ patient: selectedPatient }) }, [selectedPatient, onClinicalContext])
   function handleRegistered(patient: Patient) {
     setShowRegistration(false)
     setSelectedPatient(null)
@@ -2201,7 +2336,7 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
   }
 
   if (showRegistration) return <PatientRegistrationForm clinicId={clinicId} onCancel={() => setShowRegistration(false)} onRegistered={handleRegistered} />
-  if (selectedPatient) return <PatientProfile key={clinicId + ':' + selectedPatient.id} onViewAppointment={onViewAppointment} initialEncounter={encounterToOpen?.patient_id === selectedPatient.id ? encounterToOpen : null} clinicId={clinicId} clinicName={clinicName} clinicTimezone={clinicTimezone} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => { if (!confirmWorkspaceLeave()) return; setSelectedPatient(null); setEncounterToOpen(null) }} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />
+  if (selectedPatient) return <PatientProfile key={clinicId + ':' + selectedPatient.id} onViewAppointment={onViewAppointment} initialEncounter={encounterToOpen?.patient_id === selectedPatient.id ? encounterToOpen : null} clinicId={clinicId} clinicName={clinicName} clinicTimezone={clinicTimezone} userId={userId} role={role} clinicianLabel={clinicianLabel} patient={selectedPatient} onBack={() => { if (!confirmWorkspaceLeave()) return; setSelectedPatient(null); setEncounterToOpen(null) }} onUpdated={handlePatientUpdated} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} onClinicalContext={onClinicalContext} />
 
   return (
     <div className="patients-page">
@@ -2485,7 +2620,7 @@ function PatientTable({ patients, onSelect }: { patients: Patient[]; onSelect: (
   )
 }
 
-function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patient, initialEncounter, onViewAppointment, onBack, onUpdated, onViewReceipt, onPrintVisitSummary }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; initialEncounter?: EncounterContext | null; onViewAppointment: (appointment: Appointment) => void; onBack: () => void; onUpdated: (patient: Patient) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary }) {
+function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, clinicianLabel, patient, initialEncounter, onViewAppointment, onBack, onUpdated, onViewReceipt, onPrintVisitSummary, onClinicalContext }: { clinicId: string; clinicName: string; clinicTimezone: string; userId: string; role: UserRole; clinicianLabel: string; patient: Patient; initialEncounter?: EncounterContext | null; onViewAppointment: (appointment: Appointment) => void; onBack: () => void; onUpdated: (patient: Patient) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary: PrintVisitSummary; onClinicalContext?: ClinicalToolProps['onClinicalContext'] }) {
   const [editing, setEditing] = useState(false)
   const [visits, setVisits] = useState<Visit[]>([])
   const [doctorNames, setDoctorNames] = useState<Record<string, string>>({})
@@ -2654,18 +2789,18 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
     <section className="profile-page">
       <button className="back-button" onClick={onBack} type="button">Back to patients</button>
       {!editing ? <>
-        <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button>{canSchedule && <button className="primary-action" disabled={startingEncounter || showAppointmentForm || encounterLoading} onClick={() => void startOperationalVisit()} type="button">{startingEncounter ? 'Preparing booking...' : 'Book Appointment'}</button>}{(role === 'admin' || role === 'doctor') && <details className="queue-action-menu"><summary>More Actions</summary><div><p>For clinical care recorded without an appointment.</p><button type="button" className="button-secondary" onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }}>Record Standalone Clinical Visit</button></div></details>}</div></div>
+        <div className="profile-header"><div><p className="eyebrow">Patient file</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><p className="profile-number">File number <strong>{patient.patient_number}</strong></p></div><div className="profile-actions"><button className="button-secondary profile-secondary-action" onClick={() => setEditing(true)} type="button">Edit details</button>{canSchedule && <button className="primary-action" disabled={startingEncounter || showAppointmentForm || encounterLoading} onClick={() => void startOperationalVisit()} type="button">{startingEncounter ? 'Preparing booking...' : 'Book Appointment'}</button>}{(role === 'admin' || role === 'doctor') && <details className="queue-action-menu"><summary>More Actions</summary><div><p>For clinical care recorded without an appointment.</p><button type="button" className="standalone-visit-action" disabled={startingEncounter || checkingIn || encounterLoading} onClick={() => { setVisitSuccess(null); setShowVisitForm(true) }}>Record Standalone Clinical Visit</button>{(startingEncounter || checkingIn || encounterLoading) && <p role="status">Wait for the current patient booking/check-in operation to finish.</p>}</div></details>}</div></div>
         <div className="profile-grid"><section className="profile-card"><p className="card-label">Personal details</p><dl className="detail-list"><DetailItem label="Full name" value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} /><DetailItem label="Gender" value={patient.gender} /><DetailItem label="Date of birth" value={formatDate(patient.date_of_birth)} /><DetailItem label="Age" value={formatPatientAge(patient)} /><DetailItem label="Registered" value={formatDate(patient.created_at)} /></dl></section><section className="profile-card"><p className="card-label">Contact details</p><dl className="detail-list"><DetailItem label="Phone" value={patient.phone} /><DetailItem label="Email" value={patient.email} /><DetailItem label="Address" value={patient.address} /></dl></section></div>
         <PatientClinicalProfile key={`${clinicId}:${patient.id}:${userId}:${role}`} clinicId={clinicId} patient={patient} role={role} onUpdated={onUpdated} />
         {encounterError && <SoapSmileFeedback tone="error">{encounterError}</SoapSmileFeedback>}
-        {role === 'receptionist' && <p className="role-note">A doctor or clinic administrator must be signed in to create a clinical visit.</p>}
+        {role === 'receptionist' && <p className="role-note">Standalone clinical recording requires an active doctor or clinic administrator. Book an appointment for scheduled care.</p>}
         {showVisitForm && <NewVisitForm clinicId={clinicId} patientId={patient.id} doctorId={userId} clinicianLabel={clinicianLabel} onCancel={() => setShowVisitForm(false)} onCreated={handleVisitCreated} />}
         {visitSuccess && <SoapSmileFeedback tone="success">{visitSuccess}</SoapSmileFeedback>}
         <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Visit history</p><h3>Clinical encounters</h3></div><span className="history-count">{visits.length} {visits.length === 1 ? 'visit' : 'visits'}</span></div>
           {visitLoading && <SoapSmileLoadingState>Loading visit history...</SoapSmileLoadingState>}
           {!visitLoading && visitError && <SoapSmileFeedback tone="error">{visitError}</SoapSmileFeedback>}
           {!visitLoading && !visitError && visits.length === 0 && <div className="empty-history"><h4>No visits recorded</h4><p>New clinical encounters will appear here without replacing previous records.</p></div>}
-          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={doctorNames[visit.doctor_id] ?? (visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician')} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} />)}</div>}
+          {!visitLoading && !visitError && visits.length > 0 && <div className="visit-list">{visits.map((visit, index) => <VisitCard key={visit.id} clinicId={clinicId} visit={visit} isLatest={index === 0} clinicianLabel={doctorNames[visit.doctor_id] ?? (visit.doctor_id === userId ? clinicianLabel : 'Clinic clinician')} prescriptions={prescriptions[visit.id] ?? []} investigations={investigations[visit.id] ?? []} invoices={invoices.filter((invoice) => invoice.visit_id === visit.id)} payments={payments} canBill={role === 'admin' || role === 'receptionist'} billingOpen={billingVisit?.id === visit.id} clinicName={clinicName} patient={patient} userId={userId} role={role} onBill={() => setBillingVisit(visit)} onCancelBilling={() => setBillingVisit(null)} onInvoiceCreated={handleInvoiceCreated} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} onPrintVisitSummary={onPrintVisitSummary} onClinicalContext={onClinicalContext} />)}</div>}
         </section>
         {canViewFinance && !visitLoading && !visitError && unlinkedInvoices.length > 0 && <section className="profile-card visit-history"><div className="section-heading"><div><p className="card-label">Financial history</p><h3>Invoices without a visit link</h3></div></div><div className="visit-list">{unlinkedInvoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={role === 'admin' || role === 'receptionist'} onPaymentRecorded={handlePaymentRecorded} onViewReceipt={onViewReceipt} />)}</div></section>}
       </> : <PatientEditForm clinicId={clinicId} patient={patient} onCancel={() => setEditing(false)} onSaved={(updatedPatient) => { setEditing(false); onUpdated(updatedPatient) }} />}
@@ -2897,7 +3032,7 @@ function NewVisitForm({ clinicId, patientId, doctorId, clinicianLabel, onCancel,
 
   return (
     <section className="registration-panel visit-form-panel" aria-labelledby="new-visit-heading">
-      <div className="registration-heading"><p className="eyebrow">Clinical encounter</p><h2 id="new-visit-heading">Record Standalone Clinical Visit</h2><p className="panel-copy">Record a separate clinical encounter as {clinicianLabel}. This does not book or link an appointment. For scheduled care, use Start New Visit instead. Previous visits remain unchanged.</p></div>
+      <div className="registration-heading"><p className="eyebrow">Clinical encounter</p><h2 id="new-visit-heading">Record Standalone Clinical Visit</h2><p className="panel-copy">Record a separate clinical encounter as {clinicianLabel}. This does not book or link an appointment. For scheduled care, use Book Appointment instead. Previous visits remain unchanged.</p></div>
       <form className="patient-form" onSubmit={handleSubmit}>
         <label>Visit date and time<input type="datetime-local" value={form.visit_date} onChange={(event) => updateField('visit_date', event.target.value)} /></label>
         <label>Chief complaint<textarea value={form.chief_complaint} onChange={(event) => updateField('chief_complaint', event.target.value)} rows={3} /></label>
@@ -2961,13 +3096,14 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
   return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><button type="button" className="back-button" disabled={submitting} onClick={leave}>← Back</button><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input disabled={submitting || needsReview} type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting || needsReview}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
-function VisitCard({ clinicId, visit: originalVisit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary }) {
-  const [appointmentCompleted,setAppointmentCompleted] = useState(false)
+function VisitCard({ clinicId, visit: originalVisit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary, onClinicalContext }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary; onClinicalContext?: ClinicalToolProps['onClinicalContext'] }) {
+  const [appointmentStatus, setAppointmentStatus] = useState<AppointmentStatus | null>(null)
+  const appointmentCompleted = appointmentStatus === 'completed'
   useEffect(() => {
     let cancelled=false
     if (originalVisit.appointment_id && supabase) void supabase.from('appointments').select('status').eq('clinic_id',clinicId).eq('id',originalVisit.appointment_id).single().then((result) => {
       const row=result.data as Pick<Appointment,'status'> | null
-      if (!cancelled) setAppointmentCompleted(!result.error && row?.status==='completed')
+      if (!cancelled) setAppointmentStatus(!result.error && row ? row.status : null)
     })
     return () => { cancelled=true }
   },[clinicId,originalVisit.appointment_id])
@@ -2976,6 +3112,7 @@ function VisitCard({ clinicId, visit: originalVisit, isLatest, clinicianLabel, p
   const related = (kind: 'visit' | 'prescription' | 'investigation', id: string) => correctionState.rows.filter((row) => row.kind===kind && row.record_id===id)
   const currentPrescriptions = prescriptions.map((row) => effectiveRecord(row,correctionState.rows,'prescription')).filter((row): row is Prescription => Boolean(row))
   const currentInvestigations = investigations.map((row) => effectiveRecord(row,correctionState.rows,'investigation')).filter((row): row is Investigation => Boolean(row))
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [lifecycle, setLifecycle] = useState<StandaloneVisitLifecycle | null>(null)
   const [procedureCount, setProcedureCount] = useState<number | null>(null)
   const [lifecycleError, setLifecycleError] = useState<string | null>(null)
@@ -3014,7 +3151,9 @@ function VisitCard({ clinicId, visit: originalVisit, isLatest, clinicianLabel, p
   return (
     <article className={`visit-card${isLatest ? ' latest' : ''}`}>
       <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Clinical author / assigned clinician: {clinicianLabel}</p></div><div className="visit-card-actions">{isLatest && <span className="latest-badge">Latest</span>}{onPrintVisitSummary && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianLabel, prescriptions, investigations)} type="button">Print Visit Summary</button>}</div></div>
-      <div className="visit-fields">{correctionState.loading ? <p>Verifying effective clinical record...</p> : correctionState.error ? <p role="alert">{correctionState.error}</p> : <>{latestCorrection(correctionState.rows,'visit',visit.id) && <p>Amended narrative - original retained in correction history</p>}{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</>}</div>
+      <div className="encounter-summary"><p>{correctionState.loading ? 'Loading clinical summary...' : correctionState.error ? 'Clinical summary unavailable' : [visit.chief_complaint, visit.assessment].filter(Boolean).join(' / ') || 'No complaint or diagnosis recorded'}</p><VisitProcedureSummary visit={visit} correctionState={correctionState} /><p className="encounter-status">{visit.appointment_id ? appointmentStatus ? formatStatus(appointmentStatus) : 'Appointment status unavailable' : lifecycle ? lifecycle.state === 'saved' ? 'Saved - unfinished' : 'Finalized' : 'Standalone status unavailable'}</p></div>
+      <details className="encounter-details" open={billingOpen || standaloneSaved || detailsExpanded} onToggle={(event) => { const open=event.currentTarget.open; if (!open && !confirmWorkspaceLeave()) { event.currentTarget.open=true; return }; setDetailsExpanded(open); if (open) onClinicalContext?.({ patient, visitId: visit.id }) }}><summary>View details</summary>{(billingOpen || standaloneSaved || detailsExpanded) && <>
+      <div className="visit-fields">{correctionState.loading ? <p>Verifying effective clinical record...</p> : correctionState.error ? <p role="alert">{correctionState.error}</p> : <>{latestCorrection(correctionState.rows,'visit',visit.id) && <p>Amended narrative - original retained in correction history</p>}{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}{visit.hpi && <div><span>History of present illness</span><p>{visit.hpi}</p></div>}{visit.examination && <div><span>Findings / Examination</span><p>{visit.examination}</p></div>}{visit.follow_up_date && <div><span>Follow-up date</span><p>{formatDate(visit.follow_up_date)}</p></div>}{visit.follow_up_instructions && <div><span>Follow-up instructions</span><p>{visit.follow_up_instructions}</p></div>}</>}</div>
       {!visit.appointment_id && <div className="form-actions"><span>{lifecycle ? lifecycle.state === 'saved' ? 'Saved — unfinished' : 'Finalized' : 'Verifying standalone lifecycle...'}</span>{lifecycle?.legacy_baseline && <span>Historical finalization actor/time unknown</span>}{canFinalize && <button type="button" disabled={finalizing || !procedureCount} onClick={() => void finalizeVisit()}>{finalizing ? 'Finalizing...' : 'Finalize standalone visit'}</button>}{lifecycleError && <SoapSmileFeedback tone="error">{lifecycleError}</SoapSmileFeedback>}</div>}
       <VisitProcedures key={visit.id + ':' + (lifecycle?.state ?? 'appointment')} visit={visit} userId={userId} role={role} canCreate={standaloneSaved && canAddDentalEntries} disabled={finalizing} onCount={setProcedureCount} />
       {!correctionState.loading && !correctionState.error && <>
@@ -3028,6 +3167,8 @@ function VisitCard({ clinicId, visit: originalVisit, isLatest, clinicianLabel, p
       </>}
       {canViewDentalChart && userId && <DentalChart role={role} clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && standaloneSaved && !finalizing} />}
       {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && (Boolean(visit.appointment_id) || standaloneFinalized) && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <SoapSmileEmptyState><p>No invoice for this visit.</p></SoapSmileEmptyState> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && (Boolean(visit.appointment_id) || standaloneFinalized) && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
+      </>}
+      </details>
     </article>
   )
 }
@@ -3278,10 +3419,10 @@ const adultDentalQuadrants = [
   { label: 'Lower left', teeth: [31, 32, 33, 34, 35, 36, 37, 38] },
 ]
 
-function OdontogramWorkspace({ clinicId, userId, role }: { clinicId: string; userId: string; role: UserRole }) {
+function OdontogramWorkspace({ clinicId, userId, role, initialContext, onClinicalContext }: { clinicId: string; userId: string; role: UserRole; initialContext?: { patient: Patient; visitId?: string } | null; onClinicalContext: ClinicalToolProps['onClinicalContext'] }) {
   const [patients, setPatients] = useState<Patient[]>([])
   const [search, setSearch] = useState('')
-  const [patient, setPatient] = useState<Patient | null>(null)
+  const [patient, setPatient] = useState<Patient | null>(() => initialContext?.patient.clinic_id === clinicId ? initialContext.patient : null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
@@ -3312,12 +3453,12 @@ function OdontogramWorkspace({ clinicId, userId, role }: { clinicId: string; use
   return <div className="patients-page odontogram-page"><div className="page-heading"><div><p className="eyebrow">Clinical dental records</p><h1>Odontogram</h1><p className="panel-copy">Find a patient to review tooth history, record in an eligible visit, or correct your latest entry.</p></div><button type="button" className="button-secondary" onClick={() => setRefresh((value) => value + 1)}>Refresh patients</button></div>
     <div className="odontogram-workspace"><aside className="odontogram-patient-finder"><PatientSearchField label="Search patients" value={search} onChange={(value) => { setSearch(value); setPage(1) }} placeholder="File number, name, or phone" />
       {loading && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-      {!loading && !error && <><p className="result-count">{total} matching patients</p><div className="odontogram-patient-results">{matches.map((row) => <button type="button" className={patient?.id === row.id ? 'selected' : ''} aria-pressed={patient?.id === row.id} key={row.id} onClick={() => setPatient(row)}><strong>{[row.first_name, row.middle_name, row.last_name].filter(Boolean).join(' ')}</strong><span>File {row.patient_number}</span><small>{row.phone || 'Phone not recorded'}</small></button>)}</div><div className="form-actions"><button type="button" className="button-secondary" disabled={effectivePage === 1} onClick={() => setPage(effectivePage - 1)}>Previous</button><span>{effectivePage} / {pageCount}</span><button type="button" className="button-secondary" disabled={effectivePage === pageCount} onClick={() => setPage(effectivePage + 1)}>Next</button></div>{matches.length === 0 && <SoapSmileEmptyState><p>No matching patients. Try a file number, name, or phone.</p></SoapSmileEmptyState>}</>}
-    </aside><section className="odontogram-patient-workspace" aria-label="Selected patient odontogram">{patient ? <PatientOdontogram key={clinicId + ':' + patient.id} clinicId={clinicId} patient={patient} userId={userId} role={role} /> : <SoapSmileEmptyState icon="odontogram"><h2>Select a patient</h2><p>Patient identity, dental chart and correction history will appear here.</p></SoapSmileEmptyState>}</section></div>
+      {!loading && !error && <><p className="result-count">{total} matching patients</p><div className="odontogram-patient-results">{matches.map((row) => <button type="button" className={patient?.id === row.id ? 'selected' : ''} aria-pressed={patient?.id === row.id} key={row.id} onClick={() => { if (confirmWorkspaceLeave()) { setPatient(row); onClinicalContext({ patient: row }) } }}><strong>{[row.first_name, row.middle_name, row.last_name].filter(Boolean).join(' ')}</strong><span>File {row.patient_number}</span><small>{row.phone || 'Phone not recorded'}</small></button>)}</div><div className="form-actions"><button type="button" className="button-secondary" disabled={effectivePage === 1} onClick={() => setPage(effectivePage - 1)}>Previous</button><span>{effectivePage} / {pageCount}</span><button type="button" className="button-secondary" disabled={effectivePage === pageCount} onClick={() => setPage(effectivePage + 1)}>Next</button></div>{matches.length === 0 && <SoapSmileEmptyState><p>No matching patients. Try a file number, name, or phone.</p></SoapSmileEmptyState>}</>}
+    </aside><section className="odontogram-patient-workspace" aria-label="Selected patient odontogram">{patient ? <PatientOdontogram key={clinicId + ':' + patient.id} clinicId={clinicId} patient={patient} userId={userId} role={role} initialVisitId={initialContext?.patient.id===patient.id ? initialContext.visitId : undefined} onClinicalContext={onClinicalContext} /> : <SoapSmileEmptyState icon="odontogram"><h2>Select a patient</h2><p>Patient identity, dental chart and correction history will appear here.</p></SoapSmileEmptyState>}</section></div>
   </div>
 }
 
-function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: string; patient: Patient; userId: string; role: UserRole }) {
+function PatientOdontogram({ clinicId, patient, userId, role, initialVisitId, onClinicalContext }: { clinicId: string; patient: Patient; userId: string; role: UserRole; initialVisitId?: string; onClinicalContext: ClinicalToolProps['onClinicalContext'] }) {
   const [visits, setVisits] = useState<Visit[]>([])
   const [statuses, setStatuses] = useState<Record<string, AppointmentStatus>>({})
   const [lifecycles, setLifecycles] = useState<Record<string, StandaloneVisitLifecycle>>({})
@@ -3357,7 +3498,7 @@ function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: stri
         }
         const lifecycleMap = Object.fromEntries(lifecycleRows.map((row) => [row.visit_id, row]))
         const canRecord = (row: Visit) => (role === 'admin' || row.doctor_id === userId) && (row.appointment_id ? appointmentStatuses[row.appointment_id] === 'in_progress' : lifecycleMap[row.id]?.state === 'saved')
-        const preferred = rows.find((row) => row.appointment_id && canRecord(row)) ?? rows.find(canRecord) ?? rows[0]
+        const preferred = rows.find((row) => row.id===initialVisitId) ?? rows.find((row) => row.appointment_id && canRecord(row)) ?? rows.find(canRecord) ?? rows[0]
         if (cancelled) return
         setVisits(rows)
         setStatuses(appointmentStatuses)
@@ -3368,12 +3509,12 @@ function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: stri
     }
     void load()
     return () => { cancelled = true }
-  }, [clinicId, patient.id, role, userId, refresh])
+  }, [clinicId, patient.id, role, userId, refresh, initialVisitId])
   const visit = visits.find((row) => row.id === visitId) ?? null
   const canCreate = Boolean(visit && (role === 'admin' || visit.doctor_id === userId) && (visit.appointment_id ? statuses[visit.appointment_id] === 'in_progress' : lifecycles[visit.id]?.state === 'saved'))
-  return <><div className="odontogram-patient-identity"><div><p className="eyebrow">Patient dental workspace</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><strong>File {patient.patient_number}</strong></div><button type="button" className="button-secondary" disabled={loading} onClick={() => setRefresh((value) => value + 1)}>Refresh visit context</button></div>
+  return <><div className="odontogram-patient-identity"><div><p className="eyebrow">Patient dental workspace</p><h2>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</h2><strong>File {patient.patient_number}</strong></div><button type="button" className="button-secondary" disabled={loading} onClick={() => { if (confirmWorkspaceLeave()) setRefresh((value) => value + 1) }}>Refresh visit context</button></div>
     {loading && <SoapSmileLoadingState>Verifying clinical visits...</SoapSmileLoadingState>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-    {!loading && !error && <>{visits.length > 0 && <label className="odontogram-visit-picker">Recording / review visit<select value={visitId} onChange={(event) => setVisitId(event.target.value)}>{visits.map((row) => <option key={row.id} value={row.id}>{formatDateTime(row.visit_date)} - {row.appointment_id ? statuses[row.appointment_id]?.replaceAll('_', ' ') || 'Review only' : lifecycles[row.id]?.state === 'saved' ? 'Saved — unfinished' : lifecycles[row.id]?.state === 'finalized' ? 'Finalized' : 'Review only'}</option>)}</select></label>}
+    {!loading && !error && <>{visits.length > 0 && <label className="odontogram-visit-picker">Recording / review visit<select value={visitId} onChange={(event) => { if (confirmWorkspaceLeave()) { setVisitId(event.target.value); onClinicalContext({ patient, visitId: event.target.value }) } }}>{visits.map((row) => <option key={row.id} value={row.id}>{formatDateTime(row.visit_date)} - {row.appointment_id ? statuses[row.appointment_id]?.replaceAll('_', ' ') || 'Review only' : lifecycles[row.id]?.state === 'saved' ? 'Saved — unfinished' : lifecycles[row.id]?.state === 'finalized' ? 'Finalized' : 'Review only'}</option>)}</select></label>}
       {!canCreate && <p className="dental-context-note">History is available for review. New recording requires an eligible existing clinical visit or an in-progress consultation with appropriate authorization. No new visit or appointment is created here.</p>}
       <DentalChart key={visitId + ':' + refresh} clinicId={clinicId} patientId={patient.id} visit={visit} userId={userId} role={role} canCreate={canCreate} defaultOpen />
     </>}
@@ -3771,7 +3912,7 @@ function AppointmentForm({ clinicId, timezone, encounter, patient, onCancel, onC
         <label>Patient<input value={[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} readOnly /></label>
         <label>Doctor<select value={form.doctor_id} onChange={(event) => updateField('doctor_id', event.target.value)} required><option value="">Select doctor</option>{doctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.name}</option>)}</select></label>
         <label>Appointment date<input type="date" min={todayInputValue(timezone)} value={form.appointment_date} onChange={(event) => updateField('appointment_date', event.target.value)} required /></label>
-        <label>Time<input type="time" value={form.start_time} onChange={(event) => updateField('start_time', event.target.value)} required /></label>
+        <div className="full-width quick-appointment-time"><p>Quick time - choose a real appointment time, then adjust if needed.</p><div className="form-actions">{[['Morning', '09:00'], ['Late morning', '11:00'], ['Noon', '12:00'], ['Afternoon', '14:00'], ['Late afternoon', '16:00'], ['Evening', '18:00']].map(([label, time]) => <button type="button" className="button-secondary" key={time} aria-pressed={form.start_time===time} onClick={() => updateField('start_time', time)}>{label} | {time}</button>)}</div></div><label>Exact Time<input type="time" value={form.start_time} onChange={(event) => updateField('start_time', event.target.value)} required /></label>
         <label>Duration<select value={form.duration_minutes} onChange={(event) => updateField('duration_minutes', event.target.value)}>{[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}</select></label>
         <label>Reason (optional)<input value={form.service} onChange={(event) => updateField('service', event.target.value)} /></label>
         </fieldset><div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting}>{submitting ? 'Booking appointment...' : 'Book Appointment'}</button></div>

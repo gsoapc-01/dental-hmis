@@ -35,9 +35,9 @@ export type SoapSmileIconName =
   | 'visit'
 
 export function SoapSmileBrand({ className = '' }: { className?: string }) {
-  return <div className={`soap-brand ${className}`.trim()}>
-    <span className="soap-brand-mark"><img src={soapSmileMark} alt="" /></span>
-    <span className="soap-brand-wordmark">Soap<span>Smile</span></span>
+  return <div className={`soap-brand ${className}`.trim()} aria-label="SoapSmile: SS Dental">
+    <span className="soap-brand-mark soap-double-s" aria-hidden="true">SS</span>
+    <span className="soap-brand-wordmark">SS <span>Dental</span></span>
   </div>
 }
 

@@ -25,9 +25,9 @@ function useProcedureDraft(dirty: boolean, busy: boolean) {
   }, [dirty, busy])
 }
 
-export function VisitProcedures({ visit, userId, role, canCreate, disabled = false, onCount }: {
+export function VisitProcedures({ visit, userId, role, canCreate, disabled = false, onCount, onContinue }: {
   visit: Visit; userId?: string; role?: UserRole; canCreate: boolean; disabled?: boolean
-  onCount?: (count: number | null) => void
+  onCount?: (count: number | null) => void; onContinue?: () => void
 }) {
   const correctionState=useCorrections(visit.clinic_id,visit.id)
   const [catalog, setCatalog] = useState<ProcedureCatalog[]>([])
@@ -40,6 +40,8 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
   const [error, setError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
   const [reviewNeeded, setReviewNeeded] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const procedureSelect = useRef<HTMLSelectElement>(null)
   const lock = useRef(false)
   useProcedureDraft(JSON.stringify(form) !== JSON.stringify(emptyEntry), busy)
   useEffect(() => {
@@ -79,7 +81,7 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
         p_supersedes_id: correction?.id ?? null, p_reason: correction ? form.reason.trim() : null,
       })
       if (result.error) throw new Error(result.error.message)
-      setForm(emptyEntry); setCorrection(null); setSearch(''); setReload((value) => value + 1)
+      setForm(emptyEntry); setCorrection(null); setSearch(''); setSaved(true); correctionsChanged(); setReload((value) => value + 1)
     } catch (failure) {
       setReviewNeeded(true)
       setError(`${failure instanceof Error ? failure.message : 'Save could not be confirmed.'} Refresh and review recorded procedures before retrying.`)
@@ -89,20 +91,21 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
     if (JSON.stringify(form) !== JSON.stringify(emptyEntry) && !window.confirm('Discard unsaved procedure entry?')) return
     setCorrection(row); setSearch(''); setForm({ catalog: row.procedure_catalog_id, quantity: String(row.quantity), tooth: row.tooth_number ? String(row.tooth_number) : '', note: row.note ?? '', reason: '' })
   }
-  return <section className="profile-card procedure-panel"><div className="section-heading"><div><h3>Procedures Performed</h3><p>Record treatment actually performed, or Consultation Only. Charges are recorded separately.</p></div><button type="button" className="button-secondary" disabled={busy || disabled} onClick={() => setReload((value) => value + 1)}>Refresh</button></div>
+  return <section className="profile-card procedure-panel compact-procedure-panel"><div className="section-heading"><div><h3>Procedures Performed</h3><p>Record treatment actually performed, or Consultation Only. Charges are recorded separately.</p></div><button type="button" className="button-secondary" disabled={busy || disabled} onClick={() => setReload((value) => value + 1)}>Refresh</button></div>
     {correctionState.error && <p role="alert">{correctionState.error}</p>}{loading && <p role="status">Verifying procedures…</p>}{error && <p role="alert" className="form-error">{error}</p>}
     {!loading && (canCreate || correction) && <form className="patient-form" onSubmit={(event) => void save(event)}><fieldset disabled={busy || disabled || reviewNeeded} style={{ display: 'contents' }}>
       <label>Search procedures<input value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      <label>Procedure performed<select required value={form.catalog} onChange={(event) => { const item = catalog.find((row) => row.id === event.target.value); setForm({ ...form, catalog: event.target.value, ...(item?.code === 'CONSULTATION_ONLY' ? { quantity: '1', tooth: '' } : {}) }) }}><option value="">Select procedure</option>{options.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.category}{!item.active ? ' (inactive original)' : ''}</option>)}</select></label>
+      <label>Procedure performed<select ref={procedureSelect} required value={form.catalog} onChange={(event) => { const item = catalog.find((row) => row.id === event.target.value); setForm({ ...form, catalog: event.target.value, ...(item?.code === 'CONSULTATION_ONLY' ? { quantity: '1', tooth: '' } : {}) }) }}><option value="">Select procedure</option>{options.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.category}{!item.active ? ' (inactive original)' : ''}</option>)}</select></label>
       <label>Quantity<input type="number" min="1" max="1000" step="1" required disabled={selected?.code === 'CONSULTATION_ONLY'} value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} /></label>
       <label>Tooth (optional, FDI)<input type="number" disabled={selected?.code === 'CONSULTATION_ONLY'} value={form.tooth} onChange={(event) => setForm({ ...form, tooth: event.target.value })} /></label>
       <label className="full-width">Note (optional)<input maxLength={1000} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
       {correction && <label className="full-width">Correction reason<input required maxLength={500} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /></label>}
-      <div className="form-actions"><button type="submit" disabled={!form.catalog}>{busy ? 'Saving…' : correction ? 'Save Replacement' : 'Add Procedure'}</button>{correction && <button type="button" className="button-secondary" onClick={() => { if (window.confirm('Discard this unsaved correction?')) { setCorrection(null); setForm(emptyEntry) } }}>Cancel correction</button>}</div>
+      <div className="form-actions"><button type="submit" disabled={!form.catalog}>{busy ? 'Saving…' : correction ? 'Save Replacement' : 'Record procedure'}</button>{correction && <button type="button" className="button-secondary" onClick={() => { if (window.confirm('Discard this unsaved correction?')) { setCorrection(null); setForm(emptyEntry) } }}>Cancel correction</button>}</div>
     </fieldset></form>}
     {!loading && !error && catalog.every((item) => !item.active) && canCreate && <p>An administrator must add or install a procedure catalog in Settings before recording.</p>}
     {!loading && !error && effective.length === 0 && <p>No structured procedure recorded. Record at least one procedure or Consultation Only before closing.</p>}
-    {!correctionState.loading && !correctionState.error && effective.map((row) => <article className="clinical-record" key={row.id}><strong>{row.procedure_name}</strong><p>{row.quantity} unit(s){row.tooth_number ? ` · Tooth ${row.tooth_number}` : ''} · {new Date(row.performed_at).toLocaleString()}</p>{row.note && <p>{row.note}</p>}{row.supersedes_id && <p>Replacement · {row.correction_reason}</p>}{canCorrect(row) && <button className="button-secondary" type="button" disabled={busy || disabled || loading} onClick={() => startCorrection(row)}>Correct</button>}<ClinicalCorrectionAction kind="procedure" record={row} rows={correctionState.rows} userId={userId} role={role} authorId={visit.doctor_id} onSaved={correctionsChanged} /></article>)}
+    {saved && canCreate && <div className="form-actions"><span role="status">Procedure saved.</span><button type="button" className="button-secondary" disabled={busy || disabled || loading} onClick={() => procedureSelect.current?.focus()}>+ Add another procedure</button>{onContinue && <button type="button" className="button-secondary" disabled={busy || disabled || loading} onClick={onContinue}>Continue to Review</button>}</div>}
+    <div className="compact-record-list">{!correctionState.loading && !correctionState.error && effective.map((row) => <article key={row.id}><strong>{row.procedure_name}</strong><span>{row.quantity} unit(s){row.tooth_number ? ' - Tooth ' + row.tooth_number : ''}</span><details><summary>Details / correction actions</summary><p>{new Date(row.performed_at).toLocaleString()}</p>{row.note && <p>{row.note}</p>}{row.supersedes_id && <p>Replacement - {row.correction_reason}</p>}{canCorrect(row) && <button className="button-secondary" type="button" disabled={busy || disabled || loading} onClick={() => startCorrection(row)}>Correct</button>}<ClinicalCorrectionAction kind="procedure" record={row} rows={correctionState.rows} userId={userId} role={role} authorId={visit.doctor_id} onSaved={correctionsChanged} /></details></article>)}</div>
     {(rows.some((row) => row.supersedes_id) || correctionState.rows.some((row) => row.kind==='procedure')) && <details><summary>Correction history</summary>{rows.filter((row) => !effective.some((current) => current.id === row.id)).map((row) => <article className="clinical-record" key={row.id}><strong>{row.procedure_name} - {effectiveRecord(row,correctionState.rows,'procedure') ? 'Superseded' : 'Withdrawn'}</strong><p>{row.quantity} unit(s){row.tooth_number ? ` · Tooth ${row.tooth_number}` : ''}</p>{row.note && <p>{row.note}</p>}<CorrectionHistory original={row} rows={correctionState.rows.filter((event) => event.kind==='procedure' && event.record_id===row.id)} /><p>Recorded {new Date(row.recorded_at).toLocaleString()} · Actor {row.recorded_by}</p></article>)}</details>}
   </section>
 }
@@ -154,4 +157,23 @@ export function ProcedureActivitySummary({ data, print = false }: { data: Proced
     <div className="procedure-table-wrap" tabIndex={print ? undefined : 0} role={print ? undefined : 'region'} aria-label={print ? undefined : 'Procedure activity table'}><table className={print ? 'print-report-table procedure-table' : 'patient-table procedure-table'}><thead><tr><th>Procedure</th><th>Category</th><th>Units</th><th>Patients</th><th>Male</th><th>Female</th><th>Other</th></tr></thead><tbody>{data.rows.map((row) => <tr key={row.procedure_catalog_id}><td>{row.procedure_name}</td><td>{row.category}</td><td>{row.units}</td><td>{row.patients}</td><td>{row.male}</td><td>{row.female}</td><td>{row.other}</td></tr>)}</tbody><tfoot><tr><th colSpan={2}>Overall (unique patients)</th><td>{data.units}</td><td>{data.patients}</td><td>{data.male}</td><td>{data.female}</td><td>{data.other}</td></tr></tfoot></table></div>
     {data.rows.length === 0 && <p>No structured procedure activity in this period.</p>}
   </section>
+}
+
+export function VisitProcedureSummary({ visit, correctionState }: { visit: Visit; correctionState: ReturnType<typeof useCorrections> }) {
+  const [result, setResult] = useState<{ rows: PerformedProcedure[]; error: boolean; clinicId: string; visitId: string; corrections: typeof correctionState.rows } | null>(null)
+  useEffect(() => {
+    let cancelled=false
+    async function load() {
+      if (!procedureClient) { if (!cancelled) setResult({ rows: [], error: true, clinicId: visit.clinic_id, visitId: visit.id, corrections: correctionState.rows }); return }
+      const response = await pagedResult(() => procedureClient!.from('performed_procedures').select('*').eq('clinic_id', visit.clinic_id).eq('visit_id', visit.id).order('recorded_at').order('id'))
+      if (!cancelled) setResult({ rows: response.data ?? [], error: Boolean(response.error), clinicId: visit.clinic_id, visitId: visit.id, corrections: correctionState.rows })
+    }
+    void load()
+    return () => { cancelled=true }
+  }, [visit.clinic_id, visit.id, correctionState.rows])
+  if (correctionState.error) return <p role="alert">Procedure summary unavailable; open details and refresh.</p>
+  if (correctionState.loading || !result || result.clinicId!==visit.clinic_id || result.visitId!==visit.id || result.corrections!==correctionState.rows) return <p>Loading procedure summary...</p>
+  if (result.error) return <p role="alert">Procedure summary unavailable; open details and refresh.</p>
+  const effective = effectiveProcedures(result.rows).filter((row) => effectiveRecord(row, correctionState.rows, 'procedure'))
+  return <p className="encounter-procedure-summary"><span>Procedures: </span>{effective.length ? effective.map((row) => row.procedure_name + (row.quantity > 1 ? ' x ' + row.quantity : '')).join(' / ') : 'No effective structured procedure recorded'}</p>
 }

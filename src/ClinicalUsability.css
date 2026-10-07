@@ -1,0 +1,75 @@
+/* Clinical usability only. Keep printing and dashboard presentation independent. */
+@media screen {
+  .shell .compact-consultation,
+  .shell .compact-procedure-panel,
+  .shell .clinical-tool-selected { padding: 14px; }
+  .shell .compact-consultation .patient-form { gap: 12px; }
+  .shell .compact-consultation textarea,
+  .shell .compact-entry-form textarea { min-height: 64px; font-size: 14px; resize: vertical; }
+  .shell .clinical-more-details { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--ws-border); border-radius: 8px; background: var(--ws-surface); }
+  .shell .clinical-more-details > summary,
+  .shell .encounter-details > summary,
+  .shell .compact-record-list summary { cursor: pointer; min-height: 40px; align-content: center; font-size: 14px; color: var(--ws-text); }
+  .shell .clinical-more-details[open] > summary { margin-bottom: 8px; }
+  .shell .compact-clinical-panel { margin-top: 12px; padding-top: 12px; }
+  .shell .compact-clinical-panel .clinical-records-grid > section { padding: 12px; background: var(--ws-surface); }
+  .shell .compact-entry-form { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .shell .compact-entry-form label { display: grid; min-width: 0; gap: 5px; font-size: 14px; }
+  .shell .compact-entry-form input { min-width: 0; min-height: 42px; font-size: 14px; }
+  .shell .compact-entry-form .full-width,
+  .shell .compact-entry-form .form-actions { grid-column: 1 / -1; }
+  .shell .compact-entry-form button { grid-column: auto; font-size: 14px; }
+  .shell .compact-entry-form .button-secondary { color: var(--ws-text); background: var(--ws-surface-elevated); border: 1px solid var(--ws-border); }
+  .shell .compact-record-list { display: grid; gap: 6px; margin-bottom: 12px; }
+  .shell .compact-record-list > article { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--ws-border); border-radius: 7px; font-size: 14px; background: var(--ws-surface); }
+  .shell .compact-record-list > article > span { color: var(--ws-muted); }
+  .shell .compact-record-list > article > details { flex-basis: 100%; }
+  .shell .compact-record-list .visit-record-summary { margin-top: 4px; padding-top: 8px; }
+  .shell .visit-history { padding: 14px; }
+  .shell .visit-list { gap: 10px; }
+  .shell .visit-card { padding: 12px; box-shadow: none; }
+  .shell .visit-card-header { margin-bottom: 8px; gap: 10px; }
+  .shell .encounter-summary p { margin: 5px 0; color: var(--ws-text); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+  .shell .encounter-summary .encounter-status { color: var(--ws-muted); }
+  .shell .encounter-details { border-top: 1px solid var(--ws-border); margin-top: 8px; }
+  .shell .encounter-details > .procedure-panel { padding: 12px; margin-block: 12px; }
+  .shell .encounter-details .visit-fields { margin-block: 10px; }
+  .shell .consultation-workspace > .profile-header { position: static; padding-block: 8px; }
+  .shell .consultation-workspace .appointment-tabs { gap: 6px; margin-block: 12px; flex-wrap: wrap; }
+  .shell .consultation-workspace .appointment-tabs button { min-height: 42px; }
+  .shell .consultation-workspace .dental-chart-panel { margin-block: 12px; }
+  .shell .queue-action-menu .standalone-visit-action { min-height: 44px; padding: 10px 14px; border: 1px solid var(--ws-accent); border-radius: 7px; background: var(--ws-accent); color: var(--ws-surface-elevated); opacity: 1; cursor: pointer; font-size: 14px; font-weight: 700; }
+  .shell .queue-action-menu .standalone-visit-action:disabled { opacity: .65; cursor: wait; }
+  .shell .quick-appointment-time p { margin: 0 0 8px; font-size: 14px; color: var(--ws-muted); }
+  .shell .quick-appointment-time button { min-height: 42px; }
+  .shell .quick-appointment-time button[aria-pressed='true'] { border-color: var(--ws-accent); background: var(--ws-accent-soft); }
+  .shell .clinical-tool-workspace { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 14px; align-items: start; }
+  .shell .clinical-tool-finder { padding: 12px; border: 1px solid var(--ws-border); border-radius: 8px; background: var(--ws-surface); min-width: 0; }
+  .shell .clinical-tool-selected { min-width: 0; border: 1px solid var(--ws-border); border-radius: 8px; background: var(--ws-surface); }
+  .shell .clinical-tool-selected > label { display: grid; gap: 6px; font-size: 14px; }
+  .shell .clinical-tool-selected select { width: 100%; min-width: 0; min-height: 44px; }
+  .shell .clinical-tool-patients { display: grid; gap: 6px; margin-block: 10px; }
+  .shell .clinical-tool-patients button { display: grid; text-align: left; gap: 4px; min-height: 44px; }
+  .shell .clinical-tool-patients button[aria-pressed='true'] { border-color: var(--ws-accent); background: var(--ws-accent-soft); }
+  .shell .clinical-tool-workspace .role-note { margin-block: 10px; font-size: 14px; }
+  .soap-brand .soap-double-s { color: #16394b; font-size: 17px; font-weight: 800; letter-spacing: -1px; }
+  @media (max-width: 1024px) {
+    .shell .compact-entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .shell .clinical-tool-workspace { grid-template-columns: minmax(220px, 260px) minmax(0, 1fr); }
+  }
+  @media (max-width: 768px) {
+    .shell .clinical-tool-workspace { grid-template-columns: minmax(0, 1fr); }
+    .shell .clinical-tool-patients { max-height: 280px; overflow: auto; }
+    .shell .visit-card-header { flex-wrap: wrap; }
+  }
+  @media (max-width: 480px) {
+    .shell .compact-entry-form,
+    .shell .compact-consultation .patient-form,
+    .shell .clinical-more-details .patient-form { grid-template-columns: minmax(0, 1fr); }
+    .shell .compact-record-list > article { display: grid; }
+    .shell .compact-consultation,
+    .shell .compact-procedure-panel,
+    .shell .clinical-tool-selected { padding: 10px; }
+    .shell .clinical-tool-selected .section-heading { flex-wrap: wrap; }
+  }
+}
