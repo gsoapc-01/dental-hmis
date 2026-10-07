@@ -1286,3 +1286,28 @@ body { color: var(--slate-900); background: var(--canvas); }
   .print-report-table thead { display: table-header-group; }
   .print-report-table tfoot { display: table-row-group; }
 }
+.clinical-correction-actions,
+.clinical-correction-history {
+  margin-block: .75rem;
+  overflow-wrap: anywhere;
+}
+.clinical-correction-actions summary,
+.clinical-correction-history summary {
+  cursor: pointer;
+  font-size: .9rem;
+}
+.clinical-correction-actions input[type="checkbox"] {
+  width: auto;
+  margin-inline-end: .5rem;
+}
+.clinical-correction-history dl > div {
+  margin-block: .5rem;
+}
+.clinical-correction-history dt {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.clinical-correction-history dd {
+  margin: .25rem 0;
+  white-space: pre-wrap;
+}

@@ -1,3 +1,6 @@
+import { ClinicalCorrectionAction, CorrectionHistory } from './ClinicalCorrections'
+import { useCorrections, correctionsChanged } from './lib/useCorrections'
+import { effectiveRecord, pagedResult } from './lib/clinicalCorrections'
 import { useEffect, useRef, useState } from 'react'
 import type { UserRole, Visit } from './types/domain'
 import { effectiveProcedures, procedureClient } from './lib/procedures'
@@ -26,6 +29,7 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
   visit: Visit; userId?: string; role?: UserRole; canCreate: boolean; disabled?: boolean
   onCount?: (count: number | null) => void
 }) {
+  const correctionState=useCorrections(visit.clinic_id,visit.id)
   const [catalog, setCatalog] = useState<ProcedureCatalog[]>([])
   const [rows, setRows] = useState<PerformedProcedure[]>([])
   const [form, setForm] = useState(emptyEntry)
@@ -46,8 +50,8 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
       try {
         if (!procedureClient) throw new Error('Supabase is not configured.')
         const [catalogResult, recordsResult] = await Promise.all([
-          procedureClient.from('procedure_catalog').select('*').eq('clinic_id', visit.clinic_id).order('name'),
-          procedureClient.from('performed_procedures').select('*').eq('clinic_id', visit.clinic_id).eq('visit_id', visit.id).order('recorded_at'),
+          pagedResult(() => procedureClient!.from('procedure_catalog').select('*').eq('clinic_id', visit.clinic_id).order('name').order('id')),
+          pagedResult(() => procedureClient!.from('performed_procedures').select('*').eq('clinic_id', visit.clinic_id).eq('visit_id', visit.id).order('recorded_at').order('id')),
         ])
         if (catalogResult.error || recordsResult.error) throw new Error('Procedures could not be verified. Refresh before continuing.')
         if (cancelled) return
@@ -58,8 +62,8 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
     void load()
     return () => { cancelled = true }
   }, [visit.clinic_id, visit.id, reload])
-  const effective = effectiveProcedures(rows)
-  useEffect(() => { onCount?.(loading || error ? null : effective.length) }, [loading, error, effective.length, onCount])
+  const effective = effectiveProcedures(rows).filter((row) => effectiveRecord(row,correctionState.rows,'procedure'))
+  useEffect(() => { onCount?.(loading || error || correctionState.loading || correctionState.error ? null : effective.length) }, [loading, error, correctionState.loading, correctionState.error, effective.length, onCount])
   const selected = catalog.find((item) => item.id === form.catalog)
   const options = catalog.filter((item) => (item.active || item.id === correction?.procedure_catalog_id) &&
     (item.id === form.catalog || `${item.name} ${item.code} ${item.category}`.toLowerCase().includes(search.toLowerCase())))
@@ -86,7 +90,7 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
     setCorrection(row); setSearch(''); setForm({ catalog: row.procedure_catalog_id, quantity: String(row.quantity), tooth: row.tooth_number ? String(row.tooth_number) : '', note: row.note ?? '', reason: '' })
   }
   return <section className="profile-card procedure-panel"><div className="section-heading"><div><h3>Procedures Performed</h3><p>Record treatment actually performed, or Consultation Only. Charges are recorded separately.</p></div><button type="button" className="button-secondary" disabled={busy || disabled} onClick={() => setReload((value) => value + 1)}>Refresh</button></div>
-    {loading && <p role="status">Verifying procedures…</p>}{error && <p role="alert" className="form-error">{error}</p>}
+    {correctionState.error && <p role="alert">{correctionState.error}</p>}{loading && <p role="status">Verifying procedures…</p>}{error && <p role="alert" className="form-error">{error}</p>}
     {!loading && (canCreate || correction) && <form className="patient-form" onSubmit={(event) => void save(event)}><fieldset disabled={busy || disabled || reviewNeeded} style={{ display: 'contents' }}>
       <label>Search procedures<input value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <label>Procedure performed<select required value={form.catalog} onChange={(event) => { const item = catalog.find((row) => row.id === event.target.value); setForm({ ...form, catalog: event.target.value, ...(item?.code === 'CONSULTATION_ONLY' ? { quantity: '1', tooth: '' } : {}) }) }}><option value="">Select procedure</option>{options.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.category}{!item.active ? ' (inactive original)' : ''}</option>)}</select></label>
@@ -98,8 +102,8 @@ export function VisitProcedures({ visit, userId, role, canCreate, disabled = fal
     </fieldset></form>}
     {!loading && !error && catalog.every((item) => !item.active) && canCreate && <p>An administrator must add or install a procedure catalog in Settings before recording.</p>}
     {!loading && !error && effective.length === 0 && <p>No structured procedure recorded. Record at least one procedure or Consultation Only before closing.</p>}
-    {effective.map((row) => <article className="clinical-record" key={row.id}><strong>{row.procedure_name}</strong><p>{row.quantity} unit(s){row.tooth_number ? ` · Tooth ${row.tooth_number}` : ''} · {new Date(row.performed_at).toLocaleString()}</p>{row.note && <p>{row.note}</p>}{row.supersedes_id && <p>Replacement · {row.correction_reason}</p>}{canCorrect(row) && <button className="button-secondary" type="button" disabled={busy || disabled || loading} onClick={() => startCorrection(row)}>Correct</button>}</article>)}
-    {rows.some((row) => row.supersedes_id) && <details><summary>Correction history</summary>{rows.filter((row) => !effective.some((current) => current.id === row.id)).map((row) => <article className="clinical-record" key={row.id}><strong>{row.procedure_name} · superseded</strong><p>{row.quantity} unit(s){row.tooth_number ? ` · Tooth ${row.tooth_number}` : ''}</p>{row.note && <p>{row.note}</p>}<p>Recorded {new Date(row.recorded_at).toLocaleString()} · Actor {row.recorded_by}</p></article>)}</details>}
+    {!correctionState.loading && !correctionState.error && effective.map((row) => <article className="clinical-record" key={row.id}><strong>{row.procedure_name}</strong><p>{row.quantity} unit(s){row.tooth_number ? ` · Tooth ${row.tooth_number}` : ''} · {new Date(row.performed_at).toLocaleString()}</p>{row.note && <p>{row.note}</p>}{row.supersedes_id && <p>Replacement · {row.correction_reason}</p>}{canCorrect(row) && <button className="button-secondary" type="button" disabled={busy || disabled || loading} onClick={() => startCorrection(row)}>Correct</button>}<ClinicalCorrectionAction kind="procedure" record={row} rows={correctionState.rows} userId={userId} role={role} authorId={visit.doctor_id} onSaved={correctionsChanged} /></article>)}
+    {(rows.some((row) => row.supersedes_id) || correctionState.rows.some((row) => row.kind==='procedure')) && <details><summary>Correction history</summary>{rows.filter((row) => !effective.some((current) => current.id === row.id)).map((row) => <article className="clinical-record" key={row.id}><strong>{row.procedure_name} - {effectiveRecord(row,correctionState.rows,'procedure') ? 'Superseded' : 'Withdrawn'}</strong><p>{row.quantity} unit(s){row.tooth_number ? ` · Tooth ${row.tooth_number}` : ''}</p>{row.note && <p>{row.note}</p>}<CorrectionHistory original={row} rows={correctionState.rows.filter((event) => event.kind==='procedure' && event.record_id===row.id)} /><p>Recorded {new Date(row.recorded_at).toLocaleString()} · Actor {row.recorded_by}</p></article>)}</details>}
   </section>
 }
 

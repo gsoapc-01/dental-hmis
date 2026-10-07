@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 
+import { PasswordEstablishment, PasswordRecovery } from './PasswordAccess'
+import { ClinicalCorrectionAction, CorrectionHistory } from './ClinicalCorrections'
+import { effectiveRecord, latestCorrection, loadCorrections, readPages, pagedResult, batchedResult } from './lib/clinicalCorrections'
+import { searchPatients } from './lib/patientSearch'
+import { useCorrections, correctionsChanged } from './lib/useCorrections'
 import './App.css'
 import { VisitProcedures, ProcedureCatalogSettings, ProcedureActivitySummary } from './Procedures'
 import { procedureClient } from './lib/procedures'
@@ -28,7 +33,7 @@ type MembershipContext = {
 
 type PrintableDocument =
   | { type: 'receipt'; clinic: Clinic; patient: Patient; invoice: Invoice; payment: Payment }
-  | { type: 'visit'; standaloneState?: 'saved' | 'finalized' | 'unknown'; clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }
+  | { type: 'visit'; corrections?: import('./lib/clinicalCorrections').ClinicalCorrection[]; standaloneState?: 'saved' | 'finalized' | 'unknown'; clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[] }
   | { type: 'report'; view: ReportView; clinic: Clinic; data: ReportsData; startDate: string; endDate: string; generatedAt: string }
 
 type ViewReceipt = (patient: Patient, invoice: Invoice, payment: Payment) => void
@@ -67,6 +72,18 @@ function useUnsavedWorkspace(dirty: boolean, busy = false, isConsultationNotes =
 }
 
 function App() {
+  const [passwordSetup, setPasswordSetup] = useState(() => {
+    const fragment = new URLSearchParams(window.location.hash.slice(1))
+    return ['invite','recovery'].includes(fragment.get('type') ?? '') || new URLSearchParams(window.location.search).has('password_setup') || fragment.has('error')
+  })
+  const [invalidAccessLink] = useState(() => new URLSearchParams(window.location.hash.slice(1)).has('error'))
+  useEffect(() => {
+    if (passwordSetup) {
+      const url=new URL(window.location.href)
+      url.searchParams.set('password_setup','1')
+      window.history.replaceState(null,'',url)
+    }
+  },[passwordSetup])
   const [authStatus, setAuthStatus] = useState<AuthStatus>('loading')
   const [session, setSession] = useState<Session | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
@@ -92,8 +109,9 @@ function App() {
     }
 
     void restoreSession()
-    const unsubscribe = subscribeToAuthChanges((_event, nextSession) => {
+    const unsubscribe = subscribeToAuthChanges((event, nextSession) => {
       if (!mounted) return
+      if (event === 'PASSWORD_RECOVERY') setPasswordSetup(true)
       setSession(nextSession)
       setAuthError(null)
       setMembershipError(null)
@@ -171,6 +189,7 @@ function App() {
   }
 
   if (authStatus === 'loading') return <StatusScreen message="Loading your session..." />
+  if (passwordSetup) return <PasswordEstablishment authenticated={Boolean(session) && !invalidAccessLink} onComplete={() => { window.history.replaceState(null,'',window.location.pathname); setPasswordSetup(false); setAuthError('Password access complete. Sign in with your credentials.'); }} />
   if (authStatus === 'error') return <StatusScreen message={authError ?? 'Authentication is temporarily unavailable.'} />
   if (authStatus === 'unauthenticated') return <LoginScreen error={authError} onError={setAuthError} />
   if (membershipLoading) return <StatusScreen message="Loading your clinic..." />
@@ -217,6 +236,7 @@ function LoginScreen({ error, onError }: { error: string | null; onError: (value
           <button className="auth-submit" type="submit" disabled={submitting}><span>{submitting ? 'Signing in...' : 'Sign in'}</span>{submitting ? <SoapSmileLoader size="button" /> : <SoapSmileIcon name="arrow-right" />}</button>
         </form>
         {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+        <PasswordRecovery />
         <div className="login-foot"><SoapSmileIcon name="shield" /><span>Secure access for your care team</span></div>
         </section>
       </div>
@@ -315,7 +335,21 @@ function ClinicShell({ context }: { context: MembershipContext }) {
         if (!result.error && row) standaloneState = row.state
       }
     }
-    setPrintableDocument({ type: 'visit', clinic, patient, visit, clinicianName, prescriptions, investigations, standaloneState })
+    try {
+      if (!supabase) throw new Error('Supabase unavailable')
+      const [corrections, original, px, requests] = await Promise.all([
+        loadCorrections(clinic.id,visit.id),
+        supabase.from('visits').select('*').eq('clinic_id',clinic.id).eq('id',visit.id).single(),
+        readPages(() => supabase!.from('prescriptions').select('*').eq('clinic_id',clinic.id).eq('visit_id',visit.id).order('id')),
+        readPages(() => supabase!.from('investigations').select('*').eq('clinic_id',clinic.id).eq('visit_id',visit.id).order('id')),
+      ])
+      const originalVisit=original.data as Visit | null
+      if (original.error || !originalVisit) throw new Error('Visit unavailable')
+      visit=effectiveRecord(originalVisit,corrections,'visit')!
+      prescriptions=px.map((row) => effectiveRecord(row as Prescription,corrections,'prescription')).filter((row): row is Prescription => Boolean(row))
+      investigations=requests.map((row) => effectiveRecord(row as Investigation,corrections,'investigation')).filter((row): row is Investigation => Boolean(row))
+      setPrintableDocument({ type: 'visit', clinic, patient, visit, clinicianName, prescriptions, investigations, standaloneState, corrections })
+    } catch { window.alert('Current clinical history could not be verified. Refresh before printing.') }
   }
 
   function printReport(data: ReportsData, startDate: string, endDate: string, view: ReportView) {
@@ -450,6 +484,7 @@ function auditDetailText(metadata: unknown) {
 }
 
 function auditActionSentence(event: AuditLog) {
+  if (['visit_amended','prescription_withdrawn','prescription_replaced','investigation_withdrawn','investigation_replaced','procedure_withdrawn','dental_entry_withdrawn'].includes(event.action ?? '')) return (event.action ?? '').replaceAll('_',' ')
   if (event.action === 'procedure_recorded') return 'recorded a performed procedure'
   if (event.action === 'procedure_corrected') return 'corrected a performed procedure'
   if (event.action === 'catalog_procedure_created') return 'added a catalog procedure'
@@ -967,6 +1002,9 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOp
   const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedPatientId, setSelectedPatientId] = useState('')
+  const [recordPage,setRecordPage] = useState(1)
+  const [hasOlder,setHasOlder] = useState(false)
+  const correctionState = useCorrections(clinicId)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -981,12 +1019,11 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOp
         return
       }
 
-      const { data: visitData, error: visitError } = await client
-        .from('visits')
-        .select('*')
-        .eq('clinic_id', clinicId)
-        .order('visit_date', { ascending: false })
+      setLoading(true)
+      setError(null)
+      const { data: visitData, error: visitError } = await client.from('visits').select('*').eq('clinic_id',clinicId).order('visit_date',{ascending:false}).order('id').range((recordPage-1)*100,recordPage*100-1)
       if (cancelled) return
+      setHasOlder((visitData ?? []).length===100)
       if (visitError) {
         setLoading(false)
         setError('We could not load this clinic\'s clinical visits.')
@@ -1005,8 +1042,8 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOp
 
       const visitIds = visitRows.map((visit) => visit.id)
       const [prescriptionResult, investigationResult] = await Promise.all([
-        client.from('prescriptions').select('*').eq('clinic_id', clinicId).in('visit_id', visitIds),
-        client.from('investigations').select('*').eq('clinic_id', clinicId).in('visit_id', visitIds),
+        pagedResult(() => client.from('prescriptions').select('*').eq('clinic_id', clinicId).in('visit_id', visitIds).order('id')),
+        pagedResult(() => client.from('investigations').select('*').eq('clinic_id', clinicId).in('visit_id', visitIds).order('id')),
       ])
       if (cancelled) return
       if (prescriptionResult.error || investigationResult.error) {
@@ -1035,11 +1072,12 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOp
 
     void loadClinicalVisits()
     return () => { cancelled = true }
-  }, [clinicId])
+  }, [clinicId,recordPage])
 
   const patientVisitSummary = new Map<string, { patient: Patient; visitCount: number; latestVisit: string }>()
-  for (const visit of visits) {
-    const patient = recordContext?.patients[visit.patient_id]
+  for (const originalVisit of visits) {
+    const visit=effectiveRecord(originalVisit,correctionState.rows,'visit')!
+      const patient = recordContext?.patients[visit.patient_id]
     if (!patient) continue
     const summary = patientVisitSummary.get(patient.id)
     if (summary) summary.visitCount += 1
@@ -1068,12 +1106,12 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOp
   const effectiveVisitPage = Math.max(1, Math.min(visitPage, visitPageCount))
   const paginatedVisits = visibleVisits.slice((effectiveVisitPage - 1) * visitPageSize, effectiveVisitPage * visitPageSize)
 
-  return <div className="patients-page">
+  return <div className="patients-page"><div className="form-actions"><button type="button" className="button-secondary" disabled={loading || recordPage===1} onClick={() => setRecordPage(recordPage-1)}>Newer records</button><span>History page {recordPage}</span><button type="button" className="button-secondary" disabled={loading || !hasOlder} onClick={() => setRecordPage(recordPage+1)}>Older records</button></div>{correctionState.error && <p role="alert">{correctionState.error}</p>}
     <div className="page-heading clinical-page-heading"><div><p className="eyebrow">Clinical records</p><h1>Clinical Visits</h1><p className="panel-copy">Patient history and recent encounters.</p></div><button className="button-secondary clinical-directory-action" onClick={onOpenPatients} type="button"><SoapSmileIcon name="patients" />Patient directory</button></div>
     {loading && <SoapSmileLoadingState>Loading clinical visits...</SoapSmileLoadingState>}
     {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-    {!loading && !error && visits.length === 0 && <SoapSmileEmptyState><h2>No clinical visits recorded</h2></SoapSmileEmptyState>}
-    {!loading && !error && visits.length > 0 && <>
+    {!loading && !error && !correctionState.loading && !correctionState.error && visits.length === 0 && <SoapSmileEmptyState><h2>No clinical visits recorded</h2></SoapSmileEmptyState>}
+    {!loading && !error && !correctionState.loading && !correctionState.error && visits.length > 0 && <>
       <section className="clinical-summary-strip" aria-label="Clinical visit summary">
         <div className="clinical-summary-identity"><span className="summary-overline">{selectedPatient ? 'SELECTED PATIENT' : 'CLINIC HISTORY'}</span><strong>{selectedPatient ? [selectedPatient.first_name, selectedPatient.middle_name, selectedPatient.last_name].filter(Boolean).join(' ') : 'Clinical overview'}</strong><span>{selectedPatient ? `File ${selectedPatient.patient_number} · ${formatPatientAge(selectedPatient)}` : `${clinicalPatients.length} patients with visit history`}</span></div>
         <div className="clinical-summary-stat"><span>Visits</span><strong>{selectedPatient ? selectedPatientVisits.length : visits.length}</strong></div>
@@ -1083,7 +1121,7 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOp
       <div className="clinical-workspace">
         <aside className="clinical-patient-panel">
           <div className="clinical-panel-heading"><div><p className="eyebrow">Patient retrieval</p><h2>Patients with visits</h2></div><span>{matchingPatients.length}</span></div>
-          <PatientSearchField label="Search clinical history" value={searchTerm} onChange={setSearchTerm} placeholder="Name, file number, or phone" />
+          <PatientSearchField label="Filter this history page (use Patient directory for full search)" value={searchTerm} onChange={setSearchTerm} placeholder="Name, file number, or phone" />
           {matchingPatients.length === 0 ? <p className="clinical-search-empty">No patients match this search.</p> : <div className="clinical-patient-results" tabIndex={0} role="region" aria-label="Patients with clinical visits">{matchingPatients.map(({ patient, visitCount }) => <button className={`clinical-patient-result${selectedPatientId === patient.id ? ' selected' : ''}`} key={patient.id} type="button" aria-pressed={selectedPatientId === patient.id} onClick={() => setSelectedPatientId((current) => current === patient.id ? '' : patient.id)}>
             <span className="clinical-patient-avatar">{patient.first_name[0]}{patient.last_name[0]}</span><span className="clinical-patient-copy"><strong>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</strong><small>{patient.patient_number} · {formatPatientAge(patient)}</small></span><span className="clinical-visit-count">{visitCount}</span>
           </button>)}</div>}
@@ -1091,11 +1129,12 @@ function ClinicalVisitsView({ clinicId, onPrintVisitSummary, onViewPatient, onOp
         <section className="clinical-visit-panel" aria-label="Visit history">
           <div className="clinical-panel-heading"><div><p className="eyebrow">Chronological record</p><h2>{selectedPatient ? 'Patient visits' : 'Recent visits'}</h2></div><span>{visibleVisits.length} {visibleVisits.length === 1 ? 'visit' : 'visits'}</span></div>
           {visibleVisits.length === 0 ? <div className="clinical-visit-empty"><SoapSmileIcon name="history" /><p>No visits match this patient search.</p></div> : <>
-            <div className="clinical-visit-list" tabIndex={0} role="region" aria-label="Clinical visit list">{paginatedVisits.map((visit) => {
+            <div className="clinical-visit-list" tabIndex={0} role="region" aria-label="Clinical visit list">{paginatedVisits.map((originalVisit) => {
+              const visit=effectiveRecord(originalVisit,correctionState.rows,'visit')!
               const patient = recordContext?.patients[visit.patient_id]
               const clinicianName = recordContext?.doctorNames[visit.doctor_id] ?? 'Clinic doctor'
-              const visitPrescriptions = prescriptions.filter((prescription) => prescription.visit_id === visit.id)
-              const visitInvestigations = investigations.filter((investigation) => investigation.visit_id === visit.id)
+              const visitPrescriptions = prescriptions.filter((prescription) => prescription.visit_id === visit.id).map((row) => effectiveRecord(row,correctionState.rows,'prescription')).filter((row): row is Prescription => Boolean(row))
+              const visitInvestigations = investigations.filter((investigation) => investigation.visit_id === visit.id).map((row) => effectiveRecord(row,correctionState.rows,'investigation')).filter((row): row is Investigation => Boolean(row))
               const preview = visit.chief_complaint || visit.assessment || visit.treatment_plan
               return <article className="clinical-visit-row" key={visit.id}>
                 <div className="clinical-visit-date"><SoapSmileIcon name="calendar" /><time dateTime={visit.visit_date}>{formatDateTime(visit.visit_date)}</time></div>
@@ -1388,8 +1427,8 @@ async function loadClinicalRecordContext(clinicId: string, records: ClinicalReco
   const visitIds = [...new Set(records.map((record) => record.visit_id))]
   const doctorIds = [...new Set(records.map((record) => record.doctor_id))]
   const [patientResult, visitResult, doctorNames] = await Promise.all([
-    client.from('patients').select('*').eq('clinic_id', clinicId).in('id', patientIds),
-    client.from('visits').select('id, visit_date').eq('clinic_id', clinicId).in('id', visitIds),
+    batchedResult(patientIds,(batch) => client.from('patients').select('*').eq('clinic_id', clinicId).in('id', batch).order('id')),
+    batchedResult(visitIds,(batch) => client.from('visits').select('id, visit_date').eq('clinic_id', clinicId).in('id', batch).order('id')),
     loadClinicianNames(doctorIds),
   ])
 
@@ -1425,6 +1464,9 @@ function PatientSearchField({ label, value, onChange, placeholder }: { label: st
 function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
+  const [recordPage,setRecordPage] = useState(1)
+  const [hasOlder,setHasOlder] = useState(false)
+  const correctionState = useCorrections(clinicId)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -1438,13 +1480,12 @@ function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onVi
         setError('Supabase is not configured.')
         return
       }
-      const { data, error: queryError } = await client
-        .from('prescriptions')
-        .select('*')
-        .eq('clinic_id', clinicId)
-        .order('created_at', { ascending: false })
+      setLoading(true)
+      setError(null)
+      const { data, error: queryError } = await client.from('prescriptions').select('*').eq('clinic_id',clinicId).order('created_at',{ascending:false}).order('id').range((recordPage-1)*100,recordPage*100-1)
 
       if (cancelled) return
+      setHasOlder((data ?? []).length===100)
       if (queryError) {
         setLoading(false)
         setError('We could not load prescriptions for this clinic.')
@@ -1470,14 +1511,16 @@ function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onVi
 
     void loadPrescriptions()
     return () => { cancelled = true }
-  }, [clinicId])
+  }, [clinicId,recordPage])
 
-  return <div className="patients-page">
+  return <div className="patients-page"><div className="form-actions"><button type="button" className="button-secondary" disabled={loading || recordPage===1} onClick={() => setRecordPage(recordPage-1)}>Newer records</button><span>History page {recordPage}</span><button type="button" className="button-secondary" disabled={loading || !hasOlder} onClick={() => setRecordPage(recordPage+1)}>Older records</button></div>{correctionState.error && <p role="alert">{correctionState.error}</p>}
     <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Prescriptions</h1><p className="panel-copy">Prescriptions recorded during patient visits.</p></div></div>
     {loading && <SoapSmileLoadingState>Loading prescriptions...</SoapSmileLoadingState>}
     {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-    {!loading && !error && prescriptions.length === 0 && <SoapSmileEmptyState icon="prescriptions"><h2>No prescriptions recorded</h2></SoapSmileEmptyState>}
-    {!loading && !error && prescriptions.length > 0 && <div className="clinical-record-list">{prescriptions.map((prescription) => {
+    {!loading && !error && !correctionState.loading && !correctionState.error && prescriptions.length === 0 && <SoapSmileEmptyState icon="prescriptions"><h2>No prescriptions recorded</h2></SoapSmileEmptyState>}
+    {!loading && !error && !correctionState.loading && !correctionState.error && prescriptions.length > 0 && <div className="clinical-record-list">{prescriptions.map((original) => {
+      const prescription=effectiveRecord(original,correctionState.rows,'prescription')
+      if (!prescription) return <article key={original.id}><strong>Withdrawn prescription</strong><RecordPatientContext patient={recordContext?.patients[original.patient_id]} visitDate={recordContext?.visitDates[original.visit_id]} doctorName="Historical evidence retained" onViewPatient={onViewPatient} /></article>
       const patient = recordContext?.patients[prescription.patient_id]
       const details = [prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean)
       const doctorName = recordContext?.doctorNames[prescription.prescribing_doctor_id] ?? 'Clinic doctor'
@@ -1495,6 +1538,9 @@ function PrescriptionsView({ clinicId, onViewPatient }: { clinicId: string; onVi
 function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onViewPatient: (patient: Patient) => void }) {
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [recordContext, setRecordContext] = useState<ClinicalRecordContext | null>(null)
+  const [recordPage,setRecordPage] = useState(1)
+  const [hasOlder,setHasOlder] = useState(false)
+  const correctionState = useCorrections(clinicId)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -1508,13 +1554,12 @@ function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onV
         setError('Supabase is not configured.')
         return
       }
-      const { data, error: queryError } = await client
-        .from('investigations')
-        .select('*')
-        .eq('clinic_id', clinicId)
-        .order('created_at', { ascending: false })
+      setLoading(true)
+      setError(null)
+      const { data, error: queryError } = await client.from('investigations').select('*').eq('clinic_id',clinicId).order('created_at',{ascending:false}).order('id').range((recordPage-1)*100,recordPage*100-1)
 
       if (cancelled) return
+      setHasOlder((data ?? []).length===100)
       if (queryError) {
         setLoading(false)
         setError('We could not load investigations for this clinic.')
@@ -1540,14 +1585,16 @@ function InvestigationsView({ clinicId, onViewPatient }: { clinicId: string; onV
 
     void loadInvestigations()
     return () => { cancelled = true }
-  }, [clinicId])
+  }, [clinicId,recordPage])
 
-  return <div className="patients-page">
+  return <div className="patients-page"><div className="form-actions"><button type="button" className="button-secondary" disabled={loading || recordPage===1} onClick={() => setRecordPage(recordPage-1)}>Newer records</button><span>History page {recordPage}</span><button type="button" className="button-secondary" disabled={loading || !hasOlder} onClick={() => setRecordPage(recordPage+1)}>Older records</button></div>{correctionState.error && <p role="alert">{correctionState.error}</p>}
     <div className="page-heading"><div><p className="eyebrow">Clinical records</p><h1>Investigations</h1><p className="panel-copy">Investigations requested during patient visits.</p></div></div>
     {loading && <SoapSmileLoadingState>Loading investigations...</SoapSmileLoadingState>}
     {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-    {!loading && !error && investigations.length === 0 && <SoapSmileEmptyState icon="investigations"><h2>No investigations recorded</h2></SoapSmileEmptyState>}
-    {!loading && !error && investigations.length > 0 && <div className="clinical-record-list">{investigations.map((investigation) => {
+    {!loading && !error && !correctionState.loading && !correctionState.error && investigations.length === 0 && <SoapSmileEmptyState icon="investigations"><h2>No investigations recorded</h2></SoapSmileEmptyState>}
+    {!loading && !error && !correctionState.loading && !correctionState.error && investigations.length > 0 && <div className="clinical-record-list">{investigations.map((original) => {
+      const investigation=effectiveRecord(original,correctionState.rows,'investigation')
+      if (!investigation) return <article key={original.id}><strong>Withdrawn investigation request</strong><RecordPatientContext patient={recordContext?.patients[original.patient_id]} visitDate={recordContext?.visitDates[original.visit_id]} doctorName="Historical evidence retained" onViewPatient={onViewPatient} /></article>
       const patient = recordContext?.patients[investigation.patient_id]
       const doctorName = recordContext?.doctorNames[investigation.requesting_doctor_id] ?? 'Clinic doctor'
       const resultDate = investigation.result_date ? formatDate(investigation.result_date) : null
@@ -1599,14 +1646,16 @@ function AppointmentsView({ clinicId, timezone, initialAppointment, onViewPatien
       setLoading(true)
       setTransitionError(null)
       const today = todayInputValue(timezone)
-      const [appointmentResult, waitingResult, patientResult] = await Promise.all([
-        supabase.from('appointments').select('*').eq('clinic_id', clinicId).gte('appointment_date', today).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
-        supabase.from('appointments').select('*').eq('clinic_id', clinicId).in('status', ['arrived', 'waiting', 'in_progress']).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }),
-        supabase.from('patients').select('*').eq('clinic_id', clinicId),
+      const [appointmentResult, waitingResult] = await Promise.all([
+        pagedResult(() => supabase!.from('appointments').select('*').eq('clinic_id', clinicId).gte('appointment_date', today).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }).order('id')),
+        pagedResult(() => supabase!.from('appointments').select('*').eq('clinic_id', clinicId).in('status', ['arrived', 'waiting', 'in_progress']).order('appointment_date', { ascending: true }).order('start_time', { ascending: true }).order('id')),
       ])
 
       if (cancelled) return
       setLoading(false)
+      const linkedPatientIds=[...new Set([...(appointmentResult.data ?? []) as Appointment[],...(waitingResult.data ?? []) as Appointment[]].map((row) => row.patient_id))]
+      const patientResult=await batchedResult(linkedPatientIds,(batch) => supabase!.from('patients').select('*').eq('clinic_id',clinicId).in('id',batch).order('id'))
+      if (cancelled) return
       if (appointmentResult.error || waitingResult.error || patientResult.error) {
         setError(appointmentResult.error || waitingResult.error ? 'We could not load appointments.' : 'We could not load appointment patient details.')
         return
@@ -1939,6 +1988,7 @@ const initialPrescriptionForm: PrescriptionFormValues = { medicine: '', strength
 const initialInvestigationForm: InvestigationFormValues = { investigation_type: '', status: '', notes: '' }
 
 function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, disabled, activeSection, onCounts }: { clinicId: string; patientId: string; visitId: string; doctorId: string; disabled: boolean; activeSection?: 'prescriptions' | 'investigations'; onCounts?: (counts: { prescriptions: number; investigations: number; verified: boolean }) => void }) {
+  const correctionState=useCorrections(clinicId,visitId)
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([])
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [prescriptionForm, setPrescriptionForm] = useState<PrescriptionFormValues>(initialPrescriptionForm)
@@ -1960,8 +2010,8 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
         return
       }
       const [prescriptionResult, investigationResult] = await Promise.all([
-        supabase.from('prescriptions').select('*').eq('clinic_id', clinicId).eq('visit_id', visitId).order('created_at', { ascending: true }),
-        supabase.from('investigations').select('*').eq('clinic_id', clinicId).eq('visit_id', visitId).order('created_at', { ascending: true }),
+        pagedResult(() => supabase!.from('prescriptions').select('*').eq('clinic_id', clinicId).eq('visit_id', visitId).order('created_at', { ascending: true }).order('id')),
+        pagedResult(() => supabase!.from('investigations').select('*').eq('clinic_id', clinicId).eq('visit_id', visitId).order('created_at', { ascending: true }).order('id')),
       ])
       if (cancelled) return
       setLoading(false)
@@ -2039,7 +2089,7 @@ function VisitClinicalRecordsPanel({ clinicId, patientId, visitId, doctorId, dis
     setInvestigationForm(initialInvestigationForm)
   }
 
-  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>{activeSection === 'prescriptions' ? 'Prescriptions' : activeSection === 'investigations' ? 'Investigations' : 'Prescriptions and investigations'}</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <SoapSmileLoadingState>Loading visit records...</SoapSmileLoadingState>}{!loading && <div className="clinical-records-grid" style={activeSection ? { gridTemplateColumns: '1fr' } : undefined}><section id={activeSection ? 'consultation-section-prescriptions' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-prescriptions' : undefined} hidden={activeSection === 'investigations'}><h4>Prescriptions</h4>{prescriptions.length === 0 ? <SoapSmileEmptyState><p>No prescriptions recorded.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{prescriptions.map((prescription) => <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article>)}</div>}<form className="record-form" onSubmit={addPrescription}><input aria-label="Medicine" placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Strength" placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled || saving} /><input aria-label="Dose" placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled || saving} /><input aria-label="Route" placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled || saving} /><input aria-label="Frequency" placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled || saving} /><input aria-label="Duration" placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled || saving} /><input type="number" min="0" step="any" aria-label="Quantity" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled || saving} /><input aria-label="Instructions" placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled || saving} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add prescription'}</button></form></section><section id={activeSection ? 'consultation-section-investigations' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-investigations' : undefined} hidden={activeSection === 'prescriptions'}><h4>Investigations</h4>{investigations.length === 0 ? <SoapSmileEmptyState><p>No investigations requested.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{investigations.map((investigation) => <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article>)}</div>}<form className="record-form" onSubmit={addInvestigation}><input aria-label="Investigation type" placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Status" placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled || saving} /><textarea aria-label="Notes" placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled || saving} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add investigation'}</button></form></section></div>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
+  return <section className="clinical-records-panel"><div className="section-heading"><div><p className="card-label">Visit records</p><h3>{activeSection === 'prescriptions' ? 'Prescriptions' : activeSection === 'investigations' ? 'Investigations' : 'Prescriptions and investigations'}</h3></div><span className="history-count">{prescriptions.length + investigations.length} records</span></div>{loading && <SoapSmileLoadingState>Loading visit records...</SoapSmileLoadingState>}{!loading && !correctionState.loading && !correctionState.error && <div className="clinical-records-grid" style={activeSection ? { gridTemplateColumns: '1fr' } : undefined}><section id={activeSection ? 'consultation-section-prescriptions' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-prescriptions' : undefined} hidden={activeSection === 'investigations'}><h4>Prescriptions</h4>{prescriptions.length === 0 ? <SoapSmileEmptyState><p>No prescriptions recorded.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{prescriptions.map((original) => { const prescription=effectiveRecord(original,correctionState.rows,'prescription'); return prescription ? <article className="clinical-record" key={prescription.id}><strong>{prescription.medicine}</strong><span>{[prescription.strength, prescription.dose, prescription.route, prescription.frequency, prescription.duration].filter(Boolean).join(' · ') || 'Details not specified'}</span>{prescription.instructions && <p>{prescription.instructions}</p>}</article> : <article key={original.id}>Withdrawn prescription - see patient history</article> })}</div>}<form className="record-form" onSubmit={addPrescription}><input aria-label="Medicine" placeholder="Medicine" value={prescriptionForm.medicine} onChange={(event) => setPrescriptionForm((current) => ({ ...current, medicine: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Strength" placeholder="Strength" value={prescriptionForm.strength} onChange={(event) => setPrescriptionForm((current) => ({ ...current, strength: event.target.value }))} disabled={disabled || saving} /><input aria-label="Dose" placeholder="Dose" value={prescriptionForm.dose} onChange={(event) => setPrescriptionForm((current) => ({ ...current, dose: event.target.value }))} disabled={disabled || saving} /><input aria-label="Route" placeholder="Route" value={prescriptionForm.route} onChange={(event) => setPrescriptionForm((current) => ({ ...current, route: event.target.value }))} disabled={disabled || saving} /><input aria-label="Frequency" placeholder="Frequency" value={prescriptionForm.frequency} onChange={(event) => setPrescriptionForm((current) => ({ ...current, frequency: event.target.value }))} disabled={disabled || saving} /><input aria-label="Duration" placeholder="Duration" value={prescriptionForm.duration} onChange={(event) => setPrescriptionForm((current) => ({ ...current, duration: event.target.value }))} disabled={disabled || saving} /><input type="number" min="0" step="any" aria-label="Quantity" placeholder="Quantity" value={prescriptionForm.quantity} onChange={(event) => setPrescriptionForm((current) => ({ ...current, quantity: event.target.value }))} disabled={disabled || saving} /><input aria-label="Instructions" placeholder="Instructions" value={prescriptionForm.instructions} onChange={(event) => setPrescriptionForm((current) => ({ ...current, instructions: event.target.value }))} disabled={disabled || saving} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add prescription'}</button></form></section><section id={activeSection ? 'consultation-section-investigations' : undefined} role={activeSection ? 'tabpanel' : undefined} aria-labelledby={activeSection ? 'consultation-tab-investigations' : undefined} hidden={activeSection === 'prescriptions'}><h4>Investigations</h4>{investigations.length === 0 ? <SoapSmileEmptyState><p>No investigations requested.</p></SoapSmileEmptyState> : <div className="clinical-record-list">{investigations.map((original) => { const investigation=effectiveRecord(original,correctionState.rows,'investigation'); return investigation ? <article className="clinical-record" key={investigation.id}><strong>{investigation.investigation_type}</strong><span>{investigation.status || 'Requested'}</span>{investigation.notes && <p>{investigation.notes}</p>}</article> : <article key={original.id}>Withdrawn request - see patient history</article> })}</div>}<form className="record-form" onSubmit={addInvestigation}><input aria-label="Investigation type" placeholder="Investigation type" value={investigationForm.investigation_type} onChange={(event) => setInvestigationForm((current) => ({ ...current, investigation_type: event.target.value }))} disabled={disabled || saving} required /><input aria-label="Status" placeholder="Status" value={investigationForm.status} onChange={(event) => setInvestigationForm((current) => ({ ...current, status: event.target.value }))} disabled={disabled || saving} /><textarea aria-label="Notes" placeholder="Notes" value={investigationForm.notes} onChange={(event) => setInvestigationForm((current) => ({ ...current, notes: event.target.value }))} disabled={disabled || saving} rows={2} /><button type="submit" disabled={disabled || saving}>{saving ? <><SoapSmileLoader size="button" />Adding...</> : 'Add investigation'}</button></form></section></div>}{correctionState.error && <p role="alert">{correctionState.error}</p>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
 type PatientFormValues = {
@@ -2072,6 +2122,8 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [showRegistration, setShowRegistration] = useState(false)
+  const [page,setPage] = useState(1)
+  const [total,setTotal] = useState(0)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(() => patientToOpen)
   const [registeredPatient, setRegisteredPatient] = useState<Patient | null>(null)
@@ -2091,11 +2143,9 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
         return
       }
 
-      const { data, error: queryError } = await supabase
-        .from('patients')
-        .select('*')
-        .eq('clinic_id', clinicId)
-        .order('created_at', { ascending: false })
+      setLoading(true)
+      const { data, count, error: queryError } = await searchPatients(clinicId,searchTerm,page)
+      setTotal(count ?? 0)
 
       if (cancelled) return
       setLoading(false)
@@ -2110,15 +2160,9 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
     return () => {
       cancelled = true
     }
-  }, [clinicId, refreshVersion])
+  }, [clinicId, refreshVersion, searchTerm, page])
 
-  const normalizedSearch = searchTerm.trim().toLowerCase()
-  const visiblePatients = patients.filter((patient) => {
-    if (!normalizedSearch) return true
-    return [patient.patient_number, patient.first_name, patient.middle_name, patient.last_name, patient.phone]
-      .filter(Boolean)
-      .some((value) => value!.toLowerCase().includes(normalizedSearch))
-  })
+  const visiblePatients = patients
 
   function handleRegistered(patient: Patient) {
     setShowRegistration(false)
@@ -2169,13 +2213,14 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
       {registeredPatient && <section className="encounter-next-step"><h2>Patient registered - next step</h2><p>{[registeredPatient.first_name, registeredPatient.middle_name, registeredPatient.last_name].filter(Boolean).join(' ')} · File {registeredPatient.patient_number}</p><p>Book an appointment or review the patient file.</p><div className="form-actions"><button type="button" disabled={startingRegisteredVisit} onClick={() => void startRegisteredVisit()}>{startingRegisteredVisit ? 'Preparing booking...' : 'Book Appointment'}</button><button type="button" className="button-secondary" disabled={startingRegisteredVisit} onClick={() => { setSelectedPatient(registeredPatient); setRegisteredPatient(null); setEncounterToOpen(null); setError(null) }}>View Patient</button></div></section>}
       {registeredPatient && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
       {!selectedPatient && !registeredPatient && !showRegistration && <>
-        {!showRegistration && <div className="patient-directory-summary"><div><span className="summary-overline">CLINIC ROSTER</span><strong>{patients.length}</strong><span>patient files</span></div><p>{loading ? 'Loading clinic records...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'match' : 'matches'}${searchTerm.trim() ? ' for this search' : ' in the directory'}`}</p></div>}
-        <div className="patient-toolbar"><PatientSearchField label="Search patients" value={searchTerm} onChange={setSearchTerm} placeholder="File number, name, or phone" /><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
+        {!showRegistration && <div className="patient-directory-summary"><div><span className="summary-overline">CLINIC ROSTER</span><strong>{total}</strong><span>patient files</span></div><p>{loading ? 'Loading clinic records...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'match' : 'matches'}${searchTerm.trim() ? ' for this search' : ' in the directory'}`}</p></div>}
+        <div className="patient-toolbar"><PatientSearchField label="Search patients" value={searchTerm} onChange={(value) => { setSearchTerm(value); setPage(1) }} placeholder="File number, name, or phone" /><p className="result-count">{loading ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
         {loading && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}
         {!loading && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
         {!loading && !error && patients.length === 0 && <SoapSmileEmptyState icon="patients"><h2>No patients yet</h2><p>Registered patients will appear here.</p></SoapSmileEmptyState>}
         {!loading && !error && patients.length > 0 && visiblePatients.length === 0 && <SoapSmileEmptyState icon="patients"><h2>No matching patients</h2><p>Try a different file number, name, or phone number.</p></SoapSmileEmptyState>}
         {!loading && !error && visiblePatients.length > 0 && <PatientTable patients={visiblePatients} onSelect={setSelectedPatient} />}
+        <div className="form-actions"><button type="button" className="button-secondary" disabled={loading || page===1} onClick={() => setPage(page-1)}>Previous</button><span>Page {page} - {total} matches</span><button type="button" className="button-secondary" disabled={loading || page*50>=total} onClick={() => setPage(page+1)}>Next</button></div>
       </>}
     </div>
   )
@@ -2183,6 +2228,8 @@ function PatientsView({ clinicId, clinicName, clinicTimezone, userId, role, clin
 
 function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinicId: string; clinicName: string; currency: string; onViewReceipt: ViewReceipt }) {
   const [patients, setPatients] = useState<Patient[]>([])
+  const [patientPage,setPatientPage] = useState(1)
+  const [patientTotal,setPatientTotal] = useState(0)
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [visits, setVisits] = useState<Visit[]>([])
@@ -2204,7 +2251,9 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
         setError('Supabase is not configured.')
         return
       }
-      const { data, error: queryError } = await supabase.from('patients').select('*').eq('clinic_id', clinicId).order('created_at', { ascending: false })
+      setLoadingPatients(true)
+      const { data, count, error: queryError } = await searchPatients(clinicId,searchTerm,patientPage)
+      setPatientTotal(count ?? 0)
       if (cancelled) return
       setLoadingPatients(false)
       if (queryError) {
@@ -2216,7 +2265,7 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
 
     void loadPatients()
     return () => { cancelled = true }
-  }, [clinicId])
+  }, [clinicId,searchTerm,patientPage])
 
   useEffect(() => {
     if (!patientId) return
@@ -2233,7 +2282,7 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
       }
 
       const [visitResult, invoiceResult, paymentResult] = await Promise.all([
-        supabase.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', billingPatientId).order('visit_date', { ascending: false }),
+        pagedResult(() => supabase!.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', billingPatientId).order('visit_date', { ascending: false }).order('id')),
         supabase.from('invoices').select('*').eq('clinic_id', clinicId).eq('patient_id', billingPatientId).order('created_at', { ascending: false }),
         supabase.from('payments').select('*').eq('clinic_id', clinicId).eq('patient_id', billingPatientId).order('created_at', { ascending: true }),
       ])
@@ -2271,10 +2320,7 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
     return () => { cancelled = true }
   }, [clinicId, patientId])
 
-  const normalizedSearch = searchTerm.trim().toLowerCase()
-  const visiblePatients = patients.filter((patient) => [patient.patient_number, patient.first_name, patient.middle_name, patient.last_name, patient.phone]
-    .filter(Boolean)
-    .some((value) => value!.toLowerCase().includes(normalizedSearch)))
+  const visiblePatients = patients
   const [billingPage, setBillingPage] = useState(1)
   const billingPageSize = 8
   const billingPageCount = Math.max(1, Math.ceil(visiblePatients.length / billingPageSize))
@@ -2304,9 +2350,10 @@ function BillingView({ clinicId, clinicName, currency, onViewReceipt }: { clinic
       <div className="page-heading"><div><p className="eyebrow">Management</p><h1>Billing</h1><p className="panel-copy">Clinic currency: {currency}. Find a patient to review visits, invoices, and payments.</p></div></div>
       <div className="soap-billing-workspace">
         <aside className="soap-billing-finder"><div className="soap-workspace-panel-heading"><div><p className="eyebrow">Patient index</p><h2>Patient finder</h2></div><SoapSmileIcon name="search" /></div>
-        <div className="patient-toolbar"><PatientSearchField label="Search patients" value={searchTerm} onChange={setSearchTerm} placeholder="File number, name, or phone" /><p className="result-count">{loadingPatients ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
+        <div className="patient-toolbar"><PatientSearchField label="Search patients" value={searchTerm} onChange={(value) => { setSearchTerm(value); setPatientPage(1) }} placeholder="File number, name, or phone" /><p className="result-count">{loadingPatients ? 'Loading...' : `${visiblePatients.length} ${visiblePatients.length === 1 ? 'patient' : 'patients'}`}</p></div>
         {loadingPatients && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}
         {!selectedPatient && !loadingPatients && error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
+        <div className="form-actions"><button type="button" disabled={loadingPatients || patientPage===1} onClick={() => setPatientPage(patientPage-1)}>Previous patient page</button><span>{patientTotal} matches</span><button type="button" disabled={loadingPatients || patientPage*50>=patientTotal} onClick={() => setPatientPage(patientPage+1)}>Next patient page</button></div>
         {!loadingPatients && !error && patients.length === 0 && <SoapSmileEmptyState icon="billing"><h2>No patients yet</h2><p>Registered patients will appear here.</p></SoapSmileEmptyState>}
         {!loadingPatients && !error && patients.length > 0 && visiblePatients.length === 0 && <SoapSmileEmptyState icon="billing"><h2>No matching patients</h2><p>Try a different file number, name, or phone number.</p></SoapSmileEmptyState>}
         {!loadingPatients && !error && visiblePatients.length > 0 && <>
@@ -2525,9 +2572,9 @@ function PatientProfile({ clinicId, clinicName, clinicTimezone, userId, role, cl
       }
 
       const [visitResult, prescriptionResult, investigationResult] = await Promise.all([
-        supabase.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('visit_date', { ascending: false }),
-        supabase.from('prescriptions').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
-        supabase.from('investigations').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }),
+        pagedResult(() => supabase!.from('visits').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('visit_date', { ascending: false }).order('id')),
+        pagedResult(() => supabase!.from('prescriptions').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }).order('id')),
+        pagedResult(() => supabase!.from('investigations').select('*').eq('clinic_id', clinicId).eq('patient_id', patient.id).order('created_at', { ascending: true }).order('id')),
       ])
 
       if (cancelled) return
@@ -2674,8 +2721,8 @@ function PatientClinicalProfile({ clinicId, patient, role, onUpdated }: { clinic
       setHistoryLoading(true)
       setHistoryError(null)
       if (!supabase) { setHistoryError('Supabase is not configured.'); setHistoryLoading(false); return }
-      const result = await supabase.from('patient_clinical_profile_versions').select('*')
-        .eq('clinic_id', clinicId).eq('patient_id', patient.id).order('version_number', { ascending: false }).limit(historyLimit + 1)
+      const result = await pagedResult(() => supabase!.from('patient_clinical_profile_versions').select('*')
+        .eq('clinic_id', clinicId).eq('patient_id', patient.id).order('version_number', { ascending: false }).order('id'))
       if (cancelled) return
       setHistoryLoading(false)
       if (result.error) { setHistory([]); setHistoryError('We could not load profile history.'); return }
@@ -2914,7 +2961,21 @@ function InvoiceForm({ clinicId, patient, visit, onCancel, onCreated }: { clinic
   return <section className="registration-panel billing-form-panel" aria-labelledby="invoice-heading"><button type="button" className="back-button" disabled={submitting} onClick={leave}>← Back</button><div className="registration-heading"><p className="eyebrow">Billing</p><h2 id="invoice-heading">Create invoice</h2><p className="panel-copy">{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')} · Visit {formatDateTime(visit.visit_date)}</p></div><form className="patient-form" onSubmit={handleSubmit}><label>Invoice total<input disabled={submitting || needsReview} type="number" min="0.01" step="0.01" value={total} onChange={(event) => setTotal(event.target.value)} required /></label><div className="form-actions"><button className="button-secondary" onClick={leave} disabled={submitting} type="button">Cancel</button><button type="submit" disabled={submitting || needsReview}>{submitting ? 'Creating invoice...' : 'Create invoice'}</button></div></form>{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}</section>
 }
 
-function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary }) {
+function VisitCard({ clinicId, visit: originalVisit, isLatest, clinicianLabel, prescriptions, investigations, invoices, payments, canBill, billingOpen, clinicName, patient, userId, role, onBill, onCancelBilling, onInvoiceCreated, onPaymentRecorded, onViewReceipt, onPrintVisitSummary }: { clinicId: string; visit: Visit; isLatest: boolean; clinicianLabel: string; prescriptions: Prescription[]; investigations: Investigation[]; invoices: Invoice[]; payments: Record<string, Payment[]>; canBill: boolean; billingOpen: boolean; clinicName: string; patient: Patient; userId?: string; role?: UserRole; onBill: () => void; onCancelBilling: () => void; onInvoiceCreated: (invoice: Invoice) => void; onPaymentRecorded: (invoice: Invoice, payment: Payment) => void; onViewReceipt: ViewReceipt; onPrintVisitSummary?: PrintVisitSummary }) {
+  const [appointmentCompleted,setAppointmentCompleted] = useState(false)
+  useEffect(() => {
+    let cancelled=false
+    if (originalVisit.appointment_id && supabase) void supabase.from('appointments').select('status').eq('clinic_id',clinicId).eq('id',originalVisit.appointment_id).single().then((result) => {
+      const row=result.data as Pick<Appointment,'status'> | null
+      if (!cancelled) setAppointmentCompleted(!result.error && row?.status==='completed')
+    })
+    return () => { cancelled=true }
+  },[clinicId,originalVisit.appointment_id])
+  const correctionState = useCorrections(clinicId,originalVisit.id)
+  const visit = effectiveRecord(originalVisit,correctionState.rows,'visit')!
+  const related = (kind: 'visit' | 'prescription' | 'investigation', id: string) => correctionState.rows.filter((row) => row.kind===kind && row.record_id===id)
+  const currentPrescriptions = prescriptions.map((row) => effectiveRecord(row,correctionState.rows,'prescription')).filter((row): row is Prescription => Boolean(row))
+  const currentInvestigations = investigations.map((row) => effectiveRecord(row,correctionState.rows,'investigation')).filter((row): row is Investigation => Boolean(row))
   const [lifecycle, setLifecycle] = useState<StandaloneVisitLifecycle | null>(null)
   const [procedureCount, setProcedureCount] = useState<number | null>(null)
   const [lifecycleError, setLifecycleError] = useState<string | null>(null)
@@ -2953,10 +3014,18 @@ function VisitCard({ clinicId, visit, isLatest, clinicianLabel, prescriptions, i
   return (
     <article className={`visit-card${isLatest ? ' latest' : ''}`}>
       <div className="visit-card-header"><div><p className="visit-date">{formatDateTime(visit.visit_date)}</p><p className="visit-clinician">Clinical author / assigned clinician: {clinicianLabel}</p></div><div className="visit-card-actions">{isLatest && <span className="latest-badge">Latest</span>}{onPrintVisitSummary && <button className="button-secondary inline-button" onClick={() => onPrintVisitSummary(patient, visit, clinicianLabel, prescriptions, investigations)} type="button">Print Visit Summary</button>}</div></div>
-      <div className="visit-fields">{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</div>
+      <div className="visit-fields">{correctionState.loading ? <p>Verifying effective clinical record...</p> : correctionState.error ? <p role="alert">{correctionState.error}</p> : <>{latestCorrection(correctionState.rows,'visit',visit.id) && <p>Amended narrative - original retained in correction history</p>}{visit.chief_complaint && <div><span>Chief complaint</span><p>{visit.chief_complaint}</p></div>}{visit.assessment && <div><span>Assessment</span><p>{visit.assessment}</p></div>}{visit.treatment_plan && <div><span>Treatment plan</span><p>{visit.treatment_plan}</p></div>}{visit.clinical_notes && <div><span>Clinical notes</span><p>{visit.clinical_notes}</p></div>}</>}</div>
       {!visit.appointment_id && <div className="form-actions"><span>{lifecycle ? lifecycle.state === 'saved' ? 'Saved — unfinished' : 'Finalized' : 'Verifying standalone lifecycle...'}</span>{lifecycle?.legacy_baseline && <span>Historical finalization actor/time unknown</span>}{canFinalize && <button type="button" disabled={finalizing || !procedureCount} onClick={() => void finalizeVisit()}>{finalizing ? 'Finalizing...' : 'Finalize standalone visit'}</button>}{lifecycleError && <SoapSmileFeedback tone="error">{lifecycleError}</SoapSmileFeedback>}</div>}
       <VisitProcedures key={visit.id + ':' + (lifecycle?.state ?? 'appointment')} visit={visit} userId={userId} role={role} canCreate={standaloneSaved && canAddDentalEntries} disabled={finalizing} onCount={setProcedureCount} />
-      <VisitRecordsSummary prescriptions={prescriptions} investigations={investigations} />
+      {!correctionState.loading && !correctionState.error && <>
+        {(!visit.appointment_id || appointmentCompleted) && <ClinicalCorrectionAction kind="visit" record={originalVisit} rows={correctionState.rows} authorId={visit.doctor_id} userId={userId} role={role} onSaved={correctionsChanged} />}
+        <CorrectionHistory original={originalVisit} rows={related('visit',visit.id)} />
+        <VisitRecordsSummary prescriptions={currentPrescriptions} investigations={currentInvestigations} />
+        <details><summary>Prescription / investigation actions and history</summary>
+          {prescriptions.map((row) => <article key={row.id}><strong>{row.medicine} - {latestCorrection(correctionState.rows,'prescription',row.id)?.action === 'withdraw' ? 'Withdrawn' : latestCorrection(correctionState.rows,'prescription',row.id) ? 'Replaced' : 'Active'}</strong><ClinicalCorrectionAction kind="prescription" record={row} rows={correctionState.rows} authorId={visit.doctor_id} userId={userId} role={role} onSaved={correctionsChanged} /><CorrectionHistory original={row} rows={related('prescription',row.id)} /></article>)}
+          {investigations.map((row) => <article key={row.id}><strong>{row.investigation_type} - {latestCorrection(correctionState.rows,'investigation',row.id)?.action === 'withdraw' ? 'Withdrawn' : latestCorrection(correctionState.rows,'investigation',row.id) ? 'Replaced' : 'Active'}</strong><ClinicalCorrectionAction kind="investigation" record={row} rows={correctionState.rows} authorId={visit.doctor_id} userId={userId} role={role} onSaved={correctionsChanged} /><CorrectionHistory original={row} rows={related('investigation',row.id)} /></article>)}
+        </details>
+      </>}
       {canViewDentalChart && userId && <DentalChart role={role} clinicId={clinicId} visit={visit} userId={userId} canCreate={canAddDentalEntries && standaloneSaved && !finalizing} />}
       {canBill && <div className="visit-invoices"><div className="section-heading"><div><span>Financial history</span><h4>Invoices</h4></div>{invoices.length === 0 && (Boolean(visit.appointment_id) || standaloneFinalized) && <button className="button-secondary inline-button" onClick={onBill} type="button">Create invoice</button>}</div>{invoices.length === 0 ? <SoapSmileEmptyState><p>No invoice for this visit.</p></SoapSmileEmptyState> : invoices.map((invoice) => <InvoiceCard key={invoice.id} invoice={invoice} payments={payments[invoice.id] ?? []} clinicName={clinicName} patient={patient} canRecordPayment={canBill} onPaymentRecorded={onPaymentRecorded} onViewReceipt={onViewReceipt} />)}{billingOpen && (Boolean(visit.appointment_id) || standaloneFinalized) && <InvoiceForm clinicId={clinicId} patient={patient} visit={visit} onCancel={onCancelBilling} onCreated={onInvoiceCreated} />}</div>}
     </article>
@@ -3158,7 +3227,7 @@ function PrintableClinicalField({ label, value }: { label: string; value: string
   return <section className="print-clinical-field"><h2>{label}</h2><p>{content}</p></section>
 }
 
-function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescriptions, investigations, standaloneState }: { clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[]; standaloneState?: 'saved' | 'finalized' | 'unknown' }) {
+function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescriptions, investigations, standaloneState, corrections }: { clinic: Clinic; patient: Patient; visit: Visit; clinicianName: string; prescriptions: Prescription[]; investigations: Investigation[]; standaloneState?: 'saved' | 'finalized' | 'unknown'; corrections?: import('./lib/clinicalCorrections').ClinicalCorrection[] }) {
   const demographicDetails = [
     patient.gender,
     patient.date_of_birth ? `Date of birth: ${formatDate(patient.date_of_birth)}` : null,
@@ -3172,6 +3241,7 @@ function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescript
       <div><span>Patient</span><strong>{[patient.first_name, patient.middle_name, patient.last_name].filter(Boolean).join(' ')}</strong><small>Patient number {patient.patient_number}</small>{demographicDetails.length > 0 && <small>{demographicDetails.join(' · ')}</small>}</div>
       <div><span>Visit date</span><strong>{formatDateTime(visit.visit_date)}</strong><small>Clinical author / assigned clinician: {clinicianName}</small></div>
     </div>
+    {corrections && corrections.length>0 && <section className="print-clinical-field"><h2>Effective corrected record</h2>{corrections.map((row) => <p key={row.id}>{row.kind} ? {row.action} ? revision {row.revision} ? {formatDateTime(row.recorded_at)} ? {row.actor_display_name || row.recorded_by}</p>)}<p>Original evidence and correction reasons remain in the patient history. Withdrawn prescriptions and requests are excluded below.</p></section>}
     <PrintableClinicalField label="Chief complaint" value={visit.chief_complaint} />
     <PrintableClinicalField label="History of present illness" value={visit.hpi} />
     <PrintableClinicalField label="Examination" value={visit.examination} />
@@ -3189,7 +3259,7 @@ function VisitSummaryDocument({ clinic, patient, visit, clinicianName, prescript
 }
 
 function VisitRecordsSummary({ prescriptions, investigations }: { prescriptions: Prescription[]; investigations: Investigation[] }) {
-  return <div className="visit-record-summary"><div><span>Prescriptions</span>{prescriptions.length === 0 ? <p>None recorded</p> : prescriptions.map((prescription) => <p key={prescription.id}><strong>{prescription.medicine}</strong>{prescription.dose ? ` · ${prescription.dose}` : ''}{prescription.frequency ? ` · ${prescription.frequency}` : ''}</p>)}</div><div><span>Investigations</span>{investigations.length === 0 ? <p>None requested</p> : investigations.map((investigation) => <p key={investigation.id}><strong>{investigation.investigation_type}</strong>{investigation.status ? ` · ${investigation.status}` : ''}</p>)}</div></div>
+  return <div className="visit-record-summary"><div><span>Prescriptions</span>{prescriptions.length === 0 ? <p>None active</p> : prescriptions.map((prescription) => <p key={prescription.id}><strong>{prescription.medicine}</strong>{prescription.dose ? ` · ${prescription.dose}` : ''}{prescription.frequency ? ` · ${prescription.frequency}` : ''}</p>)}</div><div><span>Investigations</span>{investigations.length === 0 ? <p>None active</p> : investigations.map((investigation) => <p key={investigation.id}><strong>{investigation.investigation_type}</strong>{investigation.status ? ` · ${investigation.status}` : ''}</p>)}</div></div>
 }
 
 const dentalSurfaceOptions: Array<{ value: DentalSurface; label: string }> = [
@@ -3216,6 +3286,8 @@ function OdontogramWorkspace({ clinicId, userId, role }: { clinicId: string; use
   const [error, setError] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
 
+  const [page,setPage] = useState(1)
+  const [total,setTotal] = useState(0)
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -3223,33 +3295,24 @@ function OdontogramWorkspace({ clinicId, userId, role }: { clinicId: string; use
       setLoading(true)
       setError(null)
       try {
-        const rows: Patient[] = []
-        for (let offset = 0; ;) {
-          const result = await supabase.from('patients').select('*').eq('clinic_id', clinicId).order('created_at', { ascending: false }).order('id').range(offset, offset + 499)
-          if (result.error) throw result.error
-          const batch = (result.data ?? []) as Patient[]
-          if (!batch.length) break
-          rows.push(...batch)
-          offset += batch.length
-        }
-        if (!cancelled) setPatients(rows)
+        const result=await searchPatients(clinicId,search,page,8)
+        if (result.error) throw result.error
+        if (!cancelled) { setPatients((result.data ?? []) as Patient[]); setTotal(result.count ?? 0) }
       } catch { if (!cancelled) { setPatients([]); setError('We could not retrieve patients. Refresh and try again.') } }
       finally { if (!cancelled) setLoading(false) }
     }
     void load()
     return () => { cancelled = true }
-  }, [clinicId, refresh])
+  }, [clinicId, refresh, search, page])
 
-  const normalizedSearch = search.trim().toLowerCase()
-  const matches = patients.filter((row) => [row.patient_number, row.first_name, row.middle_name, row.last_name, row.phone].some((value) => value?.toLowerCase().includes(normalizedSearch)))
-  const [page, setPage] = useState(1)
-  const pageCount = Math.max(1, Math.ceil(matches.length / 8))
-  const effectivePage = Math.max(1, Math.min(page, pageCount))
+  const matches=patients
+  const pageCount=Math.max(1,Math.ceil(total/8))
+  const effectivePage=page
 
   return <div className="patients-page odontogram-page"><div className="page-heading"><div><p className="eyebrow">Clinical dental records</p><h1>Odontogram</h1><p className="panel-copy">Find a patient to review tooth history, record in an eligible visit, or correct your latest entry.</p></div><button type="button" className="button-secondary" onClick={() => setRefresh((value) => value + 1)}>Refresh patients</button></div>
     <div className="odontogram-workspace"><aside className="odontogram-patient-finder"><PatientSearchField label="Search patients" value={search} onChange={(value) => { setSearch(value); setPage(1) }} placeholder="File number, name, or phone" />
       {loading && <SoapSmileLoadingState>Loading patients...</SoapSmileLoadingState>}{error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-      {!loading && !error && <><p className="result-count">{matches.length} matching patients</p><div className="odontogram-patient-results">{matches.slice((effectivePage - 1) * 8, effectivePage * 8).map((row) => <button type="button" className={patient?.id === row.id ? 'selected' : ''} aria-pressed={patient?.id === row.id} key={row.id} onClick={() => setPatient(row)}><strong>{[row.first_name, row.middle_name, row.last_name].filter(Boolean).join(' ')}</strong><span>File {row.patient_number}</span><small>{row.phone || 'Phone not recorded'}</small></button>)}</div><div className="form-actions"><button type="button" className="button-secondary" disabled={effectivePage === 1} onClick={() => setPage(effectivePage - 1)}>Previous</button><span>{effectivePage} / {pageCount}</span><button type="button" className="button-secondary" disabled={effectivePage === pageCount} onClick={() => setPage(effectivePage + 1)}>Next</button></div>{matches.length === 0 && <SoapSmileEmptyState><p>No matching patients. Try a file number, name, or phone.</p></SoapSmileEmptyState>}</>}
+      {!loading && !error && <><p className="result-count">{total} matching patients</p><div className="odontogram-patient-results">{matches.map((row) => <button type="button" className={patient?.id === row.id ? 'selected' : ''} aria-pressed={patient?.id === row.id} key={row.id} onClick={() => setPatient(row)}><strong>{[row.first_name, row.middle_name, row.last_name].filter(Boolean).join(' ')}</strong><span>File {row.patient_number}</span><small>{row.phone || 'Phone not recorded'}</small></button>)}</div><div className="form-actions"><button type="button" className="button-secondary" disabled={effectivePage === 1} onClick={() => setPage(effectivePage - 1)}>Previous</button><span>{effectivePage} / {pageCount}</span><button type="button" className="button-secondary" disabled={effectivePage === pageCount} onClick={() => setPage(effectivePage + 1)}>Next</button></div>{matches.length === 0 && <SoapSmileEmptyState><p>No matching patients. Try a file number, name, or phone.</p></SoapSmileEmptyState>}</>}
     </aside><section className="odontogram-patient-workspace" aria-label="Selected patient odontogram">{patient ? <PatientOdontogram key={clinicId + ':' + patient.id} clinicId={clinicId} patient={patient} userId={userId} role={role} /> : <SoapSmileEmptyState icon="odontogram"><h2>Select a patient</h2><p>Patient identity, dental chart and correction history will appear here.</p></SoapSmileEmptyState>}</section></div>
   </div>
 }
@@ -3318,6 +3381,7 @@ function PatientOdontogram({ clinicId, patient, userId, role }: { clinicId: stri
 }
 
 function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defaultOpen = false, onActivityCount }: { clinicId: string; visit: Visit | null; patientId?: string; userId: string; role?: UserRole; canCreate: boolean; defaultOpen?: boolean; onActivityCount?: (count: number | null) => void }) {
+  const correctionState=useCorrections(clinicId)
   const chartPatientId = visit?.patient_id ?? patientId
   const [isOpen, setIsOpen] = useState(defaultOpen)
   const [entries, setEntries] = useState<DentalChartEntry[]>([])
@@ -3341,8 +3405,8 @@ function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defa
   useEffect(() => {
     const { chains, unverifiedEntries } = inspectDentalEntryChains(entries)
     const unverified = new Set(unverifiedEntries.map((entry) => entry.tooth_number))
-    onActivityCount?.(loading || error ? null : chains.map((chain) => chain[chain.length - 1]).filter((entry) => entry.visit_id === visit?.id && !unverified.has(entry.tooth_number)).length)
-  }, [entries, onActivityCount, visit?.id, loading, error])
+    onActivityCount?.(loading || error || correctionState.loading || correctionState.error ? null : chains.map((chain) => chain[chain.length - 1]).filter((entry) => entry.visit_id === visit?.id && !unverified.has(entry.tooth_number) && effectiveRecord(entry,correctionState.rows,'dental')).length)
+  }, [entries, onActivityCount, visit?.id, loading, error, correctionState.rows, correctionState.loading, correctionState.error])
 
   useEffect(() => {
     if (!isOpen) return
@@ -3417,8 +3481,8 @@ function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defa
 
   const { chains, unverifiedEntries } = inspectDentalEntryChains(entries)
   const unverifiedTeeth = new Set(unverifiedEntries.map((entry) => entry.tooth_number))
-  const effectiveEntries = chains.map((chain) => chain[chain.length - 1]).filter((entry) => !unverifiedTeeth.has(entry.tooth_number))
-  const canCorrect = (entry: DentalChartEntry) => !loading && role === 'doctor' && entry.recorded_by === userId && correctableVisits.includes(entry.visit_id) && !unverifiedTeeth.has(entry.tooth_number)
+  const effectiveEntries = correctionState.loading || correctionState.error ? [] : chains.map((chain) => chain[chain.length - 1]).filter((entry) => !unverifiedTeeth.has(entry.tooth_number) && effectiveRecord(entry,correctionState.rows,'dental'))
+  const canCorrect = (entry: DentalChartEntry) => !loading && !correctionState.loading && !correctionState.error && role === 'doctor' && entry.recorded_by === userId && correctableVisits.includes(entry.visit_id) && !unverifiedTeeth.has(entry.tooth_number)
 
   const availableSurfaces = selectedTooth === null
     ? dentalSurfaceOptions.filter((surface) => surface.value !== 'occlusal' && surface.value !== 'incisal')
@@ -3503,24 +3567,27 @@ function DentalChart({ clinicId, visit, patientId, userId, role, canCreate, defa
         {loading && <SoapSmileLoadingState>Loading dental history...</SoapSmileLoadingState>}
         <div className="dental-history-heading"><h4>Current entries / Corrections</h4>{selectedTooth !== null && <button type="button" className="button-secondary inline-button" onClick={() => { setSelectedTooth(null); setSurfaces([]) }}>Show all teeth</button>}<button type="button" className="button-secondary inline-button" disabled={loading} onClick={() => setRefreshVersion((version) => version + 1)}>Refresh history</button></div>
         <p className="dental-context-note">To correct an entry, use Correct entry beside its latest version below. Corrections require the active assigned doctor who originally recorded it; administrator access alone does not permit corrections.</p>
-        {effectiveEntries.length > 0 && <div className="dental-current-entries" role="region" aria-label="Current dental entries and correction actions" tabIndex={0}>{effectiveEntries.filter((entry) => selectedTooth === null || entry.tooth_number === selectedTooth).map((entry) => <article key={entry.id}><div><strong>Tooth {entry.tooth_number}</strong><p>{entry.finding || entry.procedure_text}</p><small>{clinicianNames[entry.recorded_by] || 'Clinician name unavailable'} - {formatDateTime(entry.created_at)}</small></div>{canCorrect(entry) ? <button type="button" className="button-secondary dental-correct-button" disabled={saving} onClick={() => { setCorrectionEntry(entry); setMessage(null) }}>Correct entry</button> : <small>Review only</small>}</article>)}</div>}
+        {!correctionState.loading && !correctionState.error && effectiveEntries.length > 0 && <div className="dental-current-entries" role="region" aria-label="Current dental entries and correction actions" tabIndex={0}>{effectiveEntries.filter((entry) => selectedTooth === null || entry.tooth_number === selectedTooth).map((entry) => <article key={entry.id}><div><strong>Tooth {entry.tooth_number}</strong><p>{entry.finding || entry.procedure_text}</p><small>{clinicianNames[entry.recorded_by] || 'Clinician name unavailable'} - {formatDateTime(entry.created_at)}</small></div>{canCorrect(entry) ? <button type="button" className="button-secondary dental-correct-button" disabled={saving} onClick={() => { setCorrectionEntry(entry); setMessage(null) }}>Correct entry</button> : <small>Review only</small>}<ClinicalCorrectionAction kind="dental" record={entry} rows={correctionState.rows} userId={userId} role={role} authorId={entry.recorded_by} onSaved={correctionsChanged} /></article>)}</div>}
         {unverifiedEntries.length > 0 && <SoapSmileFeedback tone="error">Some dental history has an incomplete or invalid correction chain. Current-state markers and correction actions are withheld for teeth {Array.from(unverifiedTeeth).sort((a, b) => a - b).join(', ')}. The unverified records remain below for review; refresh history and have the data reviewed.</SoapSmileFeedback>}
         {!loading && !error && entries.length === 0 && <SoapSmileEmptyState><p>No dental entries recorded for this patient.</p></SoapSmileEmptyState>}
         {entries.length > 0 && <div className="dental-entry-history" tabIndex={0} role="region" aria-label="Patient dental history"><h4>Patient dental history</h4>{chains.map((chain) => <section className="dental-correction-chain" key={chain[0].id}>{chain.map((entry, index) => {
-          const current = index === chain.length - 1
+          const withdrawn=latestCorrection(correctionState.rows,'dental',entry.id)?.action==='withdraw'
+          const current = index === chain.length - 1 && !withdrawn
           const correctable = current && canCorrect(entry)
           return <article className={'dental-entry' + (current ? ' dental-entry-current' : ' dental-entry-superseded')} key={entry.id}>
-            <div><strong>Tooth {entry.tooth_number} - {index === 0 ? 'Original entry' : 'Correction ' + index}</strong><span className="dental-version-label">{current ? unverifiedTeeth.has(entry.tooth_number) ? 'Latest in chain / Tooth state unverified' : 'Latest / Current' : index === 0 ? 'Corrected' : 'Corrected again'}</span></div>
+            <div><strong>Tooth {entry.tooth_number} - {index === 0 ? 'Original entry' : 'Correction ' + index}</strong><span className="dental-version-label">{correctionState.loading || correctionState.error ? 'Effective status unverified' : withdrawn ? 'Withdrawn error - retained as history' : current ? unverifiedTeeth.has(entry.tooth_number) ? 'Latest in chain / Tooth state unverified' : 'Latest / Current' : index === 0 ? 'Corrected' : 'Corrected again'}</span></div>
             <time>{visitDates[entry.visit_id] ? 'Visit ' + formatDateTime(visitDates[entry.visit_id]) + ' - ' : ''}Recorded {formatDateTime(entry.created_at)}</time>
             <p className="dental-entry-clinician">Recorded by {clinicianNames[entry.recorded_by] || 'Clinician name unavailable'}</p>
             {entry.surfaces.length > 0 && <span>{entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ')}</span>}
             {entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}
             {entry.correction_reason && <p className="dental-correction-reason"><b>Correction reason:</b> {entry.correction_reason}</p>}
             {correctable && <button className="button-secondary dental-correct-button" type="button" disabled={saving} onClick={() => { setCorrectionEntry(entry); setMessage(null) }}>Correct entry</button>}
-            {!current && <span className="dental-chain-link" aria-hidden="true">Continued by the correction below</span>}
+            {!current && !withdrawn && <span className="dental-chain-link" aria-hidden="true">Continued by the correction below</span>}
           </article>
         })}</section>)}</div>}
         {unverifiedEntries.length > 0 && <div className="dental-entry-history" role="region" aria-label="Unverified dental history"><h4>Unverified dental history - excluded from current state</h4>{unverifiedEntries.map((entry, index) => <article className="dental-entry" key={entry.id + '-' + index}><strong>Tooth {entry.tooth_number} - Unverified {entry.supersedes_entry_id ? 'correction' : 'original entry'}</strong><p>Visit {formatDateTime(visitDates[entry.visit_id])} - Recorded {formatDateTime(entry.created_at)} by {clinicianNames[entry.recorded_by] || 'Clinician name unavailable'}</p><p>Surfaces: {entry.surfaces.map((surface) => dentalSurfaceOptions.find((option) => option.value === surface)?.label ?? surface).join(', ') || 'Not specified'}</p>{entry.finding && <p><b>Finding:</b> {entry.finding}</p>}{entry.procedure_text && <p><b>Treatment / procedure:</b> {entry.procedure_text}</p>}{entry.notes && <p><b>Notes:</b> {entry.notes}</p>}{entry.correction_reason && <p><b>Correction reason:</b> {entry.correction_reason}</p>}</article>)}</div>}
+        {correctionState.error && <p role="alert">{correctionState.error}</p>}
+        {correctionState.rows.filter((row) => row.kind==='dental' && entries.some((entry) => entry.id===row.record_id)).map((row) => <details key={row.id}><summary>Withdrawn tooth entry - original retained</summary><p>{row.actor_display_name || row.recorded_by} - {formatDateTime(row.recorded_at)}</p><p>Reason: {row.reason}</p></details>)}
         {correctionEntry && <DentalCorrectionDialog key={correctionEntry.id} entry={correctionEntry} onClose={() => setCorrectionEntry(null)} onCorrected={() => { setCorrectionEntry(null); setMessage('Correction saved. The original remains in dental history.'); setRefreshVersion((version) => version + 1) }} />}
         {message && <SoapSmileFeedback tone="success">{message}</SoapSmileFeedback>}
         {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
