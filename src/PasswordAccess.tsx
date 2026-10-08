@@ -25,7 +25,7 @@ export function PasswordRecovery() {
       setBusy(false)
     }
   }
-  return <details><summary>Forgot password / need a new access link?</summary><form onSubmit={(event) => void send(event)}><label>Email<input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label><button type="submit" disabled={busy}>{busy ? 'Sending...' : 'Send recovery link'}</button><p role="status">{message}</p></form></details>
+  return <details className="password-recovery"><summary>Forgot password / need a new access link?</summary><form className="auth-form" onSubmit={(event) => void send(event)}><label>Email<input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label><button type="submit" disabled={busy}>{busy ? 'Sending...' : 'Send recovery link'}</button><p role="status">{message}</p></form></details>
 }
 
 export function PasswordEstablishment({ authenticated, onComplete }: { authenticated: boolean; onComplete: () => void }) {
@@ -62,7 +62,7 @@ export function PasswordEstablishment({ authenticated, onComplete }: { authentic
       const result = await supabase.auth.updateUser({ password })
       if (result.error) {
         if (['session_not_found', 'session_expired', 'refresh_token_not_found', 'refresh_token_already_used', 'bad_jwt'].includes(result.error.code ?? '') || result.error.status === 401 || result.error.status === 403) setExpired(true)
-        setError(result.error.message)
+        setError('Password could not be saved. Use a strong password and try again, or request a new recovery link.')
       }
       else {
         // Require a normal password login after establishment; never enter clinic
@@ -79,5 +79,5 @@ export function PasswordEstablishment({ authenticated, onComplete }: { authentic
       lock.current=false; setBusy(false)
     }
   }
-  return <main className="auth-page"><section className="auth-panel"><h1>Set your password</h1>{saved ? <p role="status">Password saved. Use Back to sign in to finish signing out, then log in with your new password.</p> : authenticated && !expired ? <><p>Establish your clinic credentials, then sign in with your email and password.</p><form className="auth-form" onSubmit={(event) => void save(event)}><label>New password<input type="password" autoComplete="new-password" minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} /></label><label>Confirm password<input type="password" autoComplete="new-password" minLength={8} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label><button type="submit" disabled={busy}>{busy ? 'Saving...' : 'Save password and sign out'}</button></form></> : <><p>This access link is invalid or expired. Request a new recovery link or ask your administrator to resend the invitation.</p><PasswordRecovery /></>}{error && <p role="alert">{error}</p>}<button type="button" className="button-secondary" disabled={busy} onClick={() => void backToLogin()}>Back to sign in</button></section></main>
+  return <main className="auth-page auth-page-password"><section className="auth-panel"><h1>Set new password</h1>{saved ? <p role="status">Password saved. Use Back to sign in to finish signing out, then log in with your new password.</p> : authenticated && !expired ? <><p className="panel-copy">Choose a new password, then sign in with your email and password.</p><form className="auth-form" onSubmit={(event) => void save(event)}><label>New password<input type="password" autoComplete="new-password" minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} /></label><label>Confirm password<input type="password" autoComplete="new-password" minLength={8} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label><button type="submit" disabled={busy}>{busy ? 'Saving...' : 'Save password and sign out'}</button></form></> : <><p>This access link is invalid or expired. Request a new recovery link or ask your administrator to resend the invitation.</p><PasswordRecovery /></>}{error && <p role="alert">{error}</p>}<button type="button" className="button-secondary" disabled={busy} onClick={() => void backToLogin()}>Back to sign in</button></section></main>
 }

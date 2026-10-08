@@ -127,6 +127,16 @@ export interface Database {
 const url = env.SUPABASE_URL ?? ''
 const key = env.SUPABASE_PUBLISHABLE_KEY ?? ''
 
+// Capture callback intent before the SDK consumes and removes the URL fragment.
+// These values stay in memory and must never be logged.
+const callbackUrl = new URL(window.location.href)
+const callbackFragment = new URLSearchParams(callbackUrl.hash.slice(1))
+export const passwordAccessCallback = {
+  requested: callbackUrl.searchParams.has('password_setup') || ['invite', 'recovery'].includes(callbackFragment.get('type') ?? ''),
+  token: ['invite', 'recovery'].includes(callbackFragment.get('type') ?? '') ? callbackFragment.get('access_token') : null,
+  invalid: [callbackFragment, callbackUrl.searchParams].some((params) => ['error', 'error_code', 'error_description'].some((key) => params.has(key))),
+}
+
 export const supabase: SupabaseClient<Database> | null = isConfigured()
   ? _createClient<Database>(url, key)
   : null

@@ -13,8 +13,8 @@ import type { ProcedureActivity } from './lib/procedures'
 import './SoapSmileWorkstation.css'
 import './SoapSmileThemes.css'
 import './ClinicalUsability.css'
-import { getCurrentSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
-import { bookEncounterAppointment, correctDentalChartEntry, startEncounterContext, supabase, updatePatientClinicalProfile } from './lib/supabase'
+import { getCurrentSession, isPasswordAccessSession, signIn, signOut, subscribeToAuthChanges } from './lib/auth'
+import { bookEncounterAppointment, correctDentalChartEntry, startEncounterContext, passwordAccessCallback, supabase, updatePatientClinicalProfile } from './lib/supabase'
 import { inspectDentalEntryChains } from './lib/odontogram'
 import { SoapSmileBillingPatientList, SoapSmileBrand, SoapSmileCompanion, SoapSmileCompanionDock, SoapSmileEmptyState, SoapSmileFeedback, SoapSmileIcon, SoapSmileInvoiceSummary, SoapSmileLoader, SoapSmileLoadingState, SoapSmileLoginEnvironment, SoapSmileOperationsCore, SoapSmileTooth } from './SoapSmilePresentation'
 import { SoapSmileThemePicker, SoapSmileThemeToggle } from './SoapSmileTheme'
@@ -73,18 +73,7 @@ function useUnsavedWorkspace(dirty: boolean, busy = false, isConsultationNotes =
 }
 
 function App() {
-  const [passwordSetup, setPasswordSetup] = useState(() => {
-    const fragment = new URLSearchParams(window.location.hash.slice(1))
-    return ['invite','recovery'].includes(fragment.get('type') ?? '') || new URLSearchParams(window.location.search).has('password_setup') || ['error', 'error_code', 'error_description'].some((key) => fragment.has(key) || new URLSearchParams(window.location.search).has(key))
-  })
-  const [accessCallback] = useState(() => {
-    const url = new URL(window.location.href)
-    const fragment = new URLSearchParams(url.hash.slice(1))
-    return {
-      token: ['invite', 'recovery'].includes(fragment.get('type') ?? '') ? fragment.get('access_token') : null,
-      invalid: [fragment, url.searchParams].some((params) => ['error', 'error_code', 'error_description'].some((key) => params.has(key))),
-    }
-  })
+  const [passwordSetup, setPasswordSetup] = useState(passwordAccessCallback.requested || passwordAccessCallback.invalid)
   const [recoveryValidated, setRecoveryValidated] = useState(false)
   useEffect(() => {
     if (passwordSetup) {
@@ -111,7 +100,9 @@ function App() {
         setAuthError('We could not restore your session. Please try again.')
         return
       }
-      if (accessCallback.token && result.session?.access_token === accessCallback.token && !accessCallback.invalid) setRecoveryValidated(true)
+      const verified = isPasswordAccessSession(result.session)
+      setRecoveryValidated(verified)
+      if (verified) setPasswordSetup(true)
       setSession(result.session)
       setMembershipLoading(Boolean(result.session))
       setMembershipError(null)
@@ -121,7 +112,7 @@ function App() {
     void restoreSession()
     const unsubscribe = subscribeToAuthChanges((event, nextSession) => {
       if (!mounted) return
-      if (event === 'PASSWORD_RECOVERY') { setPasswordSetup(true); setRecoveryValidated(true) }
+      if (event === 'PASSWORD_RECOVERY' || isPasswordAccessSession(nextSession)) { setPasswordSetup(true); setRecoveryValidated(isPasswordAccessSession(nextSession)) }
       if (!nextSession) { setRecoveryValidated(false); setMembershipContext(null) }
       setSession(nextSession)
       setAuthError(null)
@@ -134,7 +125,7 @@ function App() {
       mounted = false
       unsubscribe()
     }
-  }, [accessCallback])
+  }, [])
 
   useEffect(() => {
     if (passwordSetup || authStatus !== 'authenticated' || !session?.user || !supabase) {
@@ -200,7 +191,7 @@ function App() {
   }
 
   if (authStatus === 'loading') return <StatusScreen message="Loading your session..." />
-  if (passwordSetup) return <PasswordEstablishment authenticated={Boolean(session) && recoveryValidated && !accessCallback.invalid} onComplete={() => { window.history.replaceState(null,'',window.location.pathname); setPasswordSetup(false); setRecoveryValidated(false); setAuthError(null); }} />
+  if (passwordSetup) return <PasswordEstablishment authenticated={Boolean(session) && recoveryValidated && !passwordAccessCallback.invalid} onComplete={() => { window.history.replaceState(null,'',window.location.pathname); setPasswordSetup(false); setRecoveryValidated(false); setAuthError(null); }} />
   if (authStatus === 'error') return <StatusScreen message={authError ?? 'Authentication is temporarily unavailable.'} />
   if (authStatus === 'unauthenticated') return <LoginScreen error={authError} onError={setAuthError} />
   if (membershipLoading) return <StatusScreen message="Loading your clinic..." />

@@ -1316,3 +1316,13 @@ body { color: var(--slate-900); background: var(--canvas); }
 .auth-page-setup .auth-panel { width: min(100%, 440px); min-width: 0; justify-self: center; margin: 0; }
 .auth-page-setup .panel-copy { overflow-wrap: anywhere; }
 .auth-page-setup .button-secondary { margin-top: 16px; }
+
+/* Recovery shares the login form controls and standalone auth panel layout. */
+.password-recovery { margin-top: 20px; font-size: 13px; }
+.password-recovery summary { cursor: pointer; font-weight: 600; }
+.password-recovery summary:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.password-recovery .auth-form { margin-top: 16px; }
+.password-recovery [role="status"] { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.auth-page.auth-page-password { min-height: 100svh; display: grid; place-items: center; padding: 24px 16px; }
+.auth-page-password .auth-panel { width: min(100%, 440px); min-width: 0; justify-self: center; margin: 0; }
+.auth-page-password .button-secondary { margin-top: 20px; }

@@ -1,6 +1,18 @@
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js'
 
-import { supabase } from './supabase'
+import { passwordAccessCallback, supabase } from './supabase'
+
+// Subscribe before React mounts so a fast callback cannot lose PASSWORD_RECOVERY.
+let passwordAccessUser: string | null = null
+supabase?.auth.onAuthStateChange((event, session) => {
+  if (event === 'PASSWORD_RECOVERY' && !passwordAccessCallback.invalid) passwordAccessUser = session?.user.id ?? null
+  if (event === 'SIGNED_OUT') passwordAccessUser = null
+})
+
+export function isPasswordAccessSession(session: Session | null): boolean {
+  if (!session || passwordAccessCallback.invalid) return false
+  return session.user.id === passwordAccessUser || Boolean(passwordAccessCallback.token && session.access_token === passwordAccessCallback.token)
+}
 
 export type AuthResult = {
   user: User | null
