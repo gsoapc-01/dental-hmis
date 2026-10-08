@@ -73,3 +73,7 @@ export default defineConfig([
 ])
 
 ```
+
+## Password recovery redirect
+
+Set optional `VITE_PASSWORD_RESET_REDIRECT_URL` in the environment used for each Vite build. Use the actual application callback URL for that environment; if unset, recovery uses the current page origin and path. The app adds `password_setup=1` to open the existing password screen. Configure the resulting URL in that environment's Supabase Auth redirect allowlist. Keep Development and Production URLs and Supabase projects separate. Rebuild after changing this value.

@@ -75,9 +75,17 @@ function useUnsavedWorkspace(dirty: boolean, busy = false, isConsultationNotes =
 function App() {
   const [passwordSetup, setPasswordSetup] = useState(() => {
     const fragment = new URLSearchParams(window.location.hash.slice(1))
-    return ['invite','recovery'].includes(fragment.get('type') ?? '') || new URLSearchParams(window.location.search).has('password_setup') || fragment.has('error')
+    return ['invite','recovery'].includes(fragment.get('type') ?? '') || new URLSearchParams(window.location.search).has('password_setup') || ['error', 'error_code', 'error_description'].some((key) => fragment.has(key) || new URLSearchParams(window.location.search).has(key))
   })
-  const [invalidAccessLink] = useState(() => new URLSearchParams(window.location.hash.slice(1)).has('error'))
+  const [accessCallback] = useState(() => {
+    const url = new URL(window.location.href)
+    const fragment = new URLSearchParams(url.hash.slice(1))
+    return {
+      token: ['invite', 'recovery'].includes(fragment.get('type') ?? '') ? fragment.get('access_token') : null,
+      invalid: [fragment, url.searchParams].some((params) => ['error', 'error_code', 'error_description'].some((key) => params.has(key))),
+    }
+  })
+  const [recoveryValidated, setRecoveryValidated] = useState(false)
   useEffect(() => {
     if (passwordSetup) {
       const url=new URL(window.location.href)
@@ -103,6 +111,7 @@ function App() {
         setAuthError('We could not restore your session. Please try again.')
         return
       }
+      if (accessCallback.token && result.session?.access_token === accessCallback.token && !accessCallback.invalid) setRecoveryValidated(true)
       setSession(result.session)
       setMembershipLoading(Boolean(result.session))
       setMembershipError(null)
@@ -112,7 +121,8 @@ function App() {
     void restoreSession()
     const unsubscribe = subscribeToAuthChanges((event, nextSession) => {
       if (!mounted) return
-      if (event === 'PASSWORD_RECOVERY') setPasswordSetup(true)
+      if (event === 'PASSWORD_RECOVERY') { setPasswordSetup(true); setRecoveryValidated(true) }
+      if (!nextSession) { setRecoveryValidated(false); setMembershipContext(null) }
       setSession(nextSession)
       setAuthError(null)
       setMembershipError(null)
@@ -124,10 +134,10 @@ function App() {
       mounted = false
       unsubscribe()
     }
-  }, [])
+  }, [accessCallback])
 
   useEffect(() => {
-    if (authStatus !== 'authenticated' || !session?.user || !supabase) {
+    if (passwordSetup || authStatus !== 'authenticated' || !session?.user || !supabase) {
       return
     }
 
@@ -182,7 +192,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [authStatus, session])
+  }, [authStatus, session, passwordSetup])
 
   async function handleInactiveSignOut() {
     const error = await signOut()
@@ -190,7 +200,7 @@ function App() {
   }
 
   if (authStatus === 'loading') return <StatusScreen message="Loading your session..." />
-  if (passwordSetup) return <PasswordEstablishment authenticated={Boolean(session) && !invalidAccessLink} onComplete={() => { window.history.replaceState(null,'',window.location.pathname); setPasswordSetup(false); setAuthError('Password access complete. Sign in with your credentials.'); }} />
+  if (passwordSetup) return <PasswordEstablishment authenticated={Boolean(session) && recoveryValidated && !accessCallback.invalid} onComplete={() => { window.history.replaceState(null,'',window.location.pathname); setPasswordSetup(false); setRecoveryValidated(false); setAuthError(null); }} />
   if (authStatus === 'error') return <StatusScreen message={authError ?? 'Authentication is temporarily unavailable.'} />
   if (authStatus === 'unauthenticated') return <LoginScreen error={authError} onError={setAuthError} />
   if (membershipLoading) return <StatusScreen message="Loading your clinic..." />
@@ -249,9 +259,25 @@ function ClinicSetupScreen({ user }: { user: User }) {
   const [clinicName, setClinicName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+
+  async function handleSignOut() {
+    if (submitting || signingOut) return
+    setSigningOut(true)
+    setError(null)
+    try {
+      const result = await signOut()
+      if (result) setError('Sign-out failed. Please try again.')
+    } catch {
+      setError('Sign-out failed. Please try again.')
+    } finally {
+      setSigningOut(false)
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (submitting || signingOut) return
     const name = clinicName.trim()
     if (name.length < 1 || name.length > 200) {
       setError('Enter a clinic name between 1 and 200 characters.')
@@ -274,15 +300,16 @@ function ClinicSetupScreen({ user }: { user: User }) {
   }
 
   return (
-    <main className="auth-page">
+    <main className="auth-page auth-page-setup">
       <section className="auth-panel">
         <SoapSmileBrand className="login-brand" />
         <h1>Set up your clinic</h1>
         <p className="panel-copy">Create the clinic workspace for {user.email ?? 'your account'}.</p>
         <form className="auth-form" onSubmit={handleSubmit}>
           <label>Clinic name<input value={clinicName} onChange={(event) => setClinicName(event.target.value)} autoComplete="organization" maxLength={200} required /></label>
-          <button type="submit" disabled={submitting}>{submitting ? <><SoapSmileLoader size="button" />Creating clinic...</> : 'Create clinic'}</button>
+          <button type="submit" disabled={submitting || signingOut}>{submitting ? <><SoapSmileLoader size="button" />Creating clinic...</> : 'Create clinic'}</button>
         </form>
+        <button type="button" className="button-secondary" disabled={submitting || signingOut} onClick={() => void handleSignOut()}>{signingOut ? 'Signing out...' : 'Sign out / Back to login'}</button>
         {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
       </section>
     </main>

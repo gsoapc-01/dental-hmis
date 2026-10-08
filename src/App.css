@@ -1311,3 +1311,8 @@ body { color: var(--slate-900); background: var(--canvas); }
   margin: .25rem 0;
   white-space: pre-wrap;
 }
+
+.auth-page.auth-page-setup { min-height: 100svh; display: grid; place-items: center; padding: 24px 16px; }
+.auth-page-setup .auth-panel { width: min(100%, 440px); min-width: 0; justify-self: center; margin: 0; }
+.auth-page-setup .panel-copy { overflow-wrap: anywhere; }
+.auth-page-setup .button-secondary { margin-top: 16px; }

@@ -7,6 +7,7 @@ const get = (key: `VITE_${string}`): string | null => {
 export const env = {
   SUPABASE_URL: get('VITE_SUPABASE_URL'),
   SUPABASE_PUBLISHABLE_KEY: get('VITE_SUPABASE_PUBLISHABLE_KEY'),
+  PASSWORD_RESET_REDIRECT_URL: get('VITE_PASSWORD_RESET_REDIRECT_URL'),
 } as const
 
 export type Env = typeof env
