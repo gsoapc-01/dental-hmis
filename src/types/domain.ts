@@ -41,6 +41,7 @@ export type DentalSurface =
   | 'incisal'
 
 export interface Clinic {
+  lifecycle_status: 'pending' | 'active' | 'suspended'
   id: string
   name: string
   logo_url?: string | null

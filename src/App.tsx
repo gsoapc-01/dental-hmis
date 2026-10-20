@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
+import { OwnerClinics } from './OwnerClinics'
+import { lifecycleClient } from './lib/clinicLifecycle'
 
 import { PasswordEstablishment, PasswordRecovery } from './PasswordAccess'
 import { ClinicalCorrectionAction, CorrectionHistory } from './ClinicalCorrections'
@@ -88,6 +90,7 @@ function App() {
   const [membershipContext, setMembershipContext] = useState<MembershipContext | null>(null)
   const [membershipLoading, setMembershipLoading] = useState(false)
   const [membershipError, setMembershipError] = useState<string | null>(null)
+  const [platformOwner, setPlatformOwner] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -137,6 +140,23 @@ function App() {
     const authenticatedUser = session.user
 
     async function loadMembership() {
+      const owner = await lifecycleClient!.rpc('is_platform_owner', {})
+      if (cancelled) return
+      if (owner.error) {
+        setMembershipContext(null); setPlatformOwner(false); setMembershipLoading(false)
+        setMembershipError('We could not verify clinic access. Please try again.')
+        return
+      }
+      setPlatformOwner(owner.data === true)
+      if (owner.data) { setMembershipContext(null); setMembershipLoading(false); return }
+      const access = await lifecycleClient!.rpc('my_clinic_access', {})
+      if (cancelled) return
+      if (access.error) { setMembershipContext(null); setMembershipLoading(false); setMembershipError('We could not verify clinic access. Please try again.'); return }
+      if (access.data?.length && !access.data.some((row) => row.is_active && row.lifecycle_status === 'active')) {
+        setMembershipContext(null); setMembershipLoading(false)
+        setMembershipError(access.data.some((row) => row.lifecycle_status === 'suspended') ? 'Your clinic is suspended. Contact SoapSmile support.' : 'Clinic access is pending or inactive. Contact your clinic administrator or SoapSmile support.')
+        return
+      }
       const { data: membershipRows, error: membershipQueryError } = await client
         .from('clinic_memberships')
         .select('user_id, clinic_id, role, is_active, created_at')
@@ -185,6 +205,29 @@ function App() {
     }
   }, [authStatus, session, passwordSetup])
 
+  useEffect(() => {
+    if (!membershipContext || !lifecycleClient) return
+    let cancelled = false
+    const clinicId = membershipContext.clinic.id
+    async function verifyAccess() {
+      try {
+        const result = await lifecycleClient!.rpc('my_clinic_access', {})
+        if (cancelled) return
+        const row = result.data?.find((item) => item.clinic_id === clinicId)
+        if (result.error || !row?.is_active || row.lifecycle_status !== 'active') {
+          setMembershipContext(null)
+          setMembershipError(row?.lifecycle_status === 'suspended' ? 'Your clinic is suspended. Contact SoapSmile support.' : 'Clinic access is unavailable. Sign in again or contact support.')
+        }
+      } catch {
+        if (!cancelled) { setMembershipContext(null); setMembershipError('Clinic access could not be verified. Sign in again.') }
+      }
+    }
+    const interval = window.setInterval(() => void verifyAccess(), 15000)
+    const onFocus = () => void verifyAccess()
+    window.addEventListener('focus', onFocus)
+    return () => { cancelled = true; window.clearInterval(interval); window.removeEventListener('focus', onFocus) }
+  }, [membershipContext])
+
   async function handleInactiveSignOut() {
     const error = await signOut()
     if (error) setMembershipError('Sign-out failed. Please try again.')
@@ -195,8 +238,9 @@ function App() {
   if (authStatus === 'error') return <StatusScreen message={authError ?? 'Authentication is temporarily unavailable.'} />
   if (authStatus === 'unauthenticated') return <LoginScreen error={authError} onError={setAuthError} />
   if (membershipLoading) return <StatusScreen message="Loading your clinic..." />
-  if (membershipError) return <StatusScreen message={membershipError} action={membershipError === 'Your clinic access is inactive. Contact a clinic administrator.' ? <button onClick={() => void handleInactiveSignOut()} type="button">Sign Out</button> : <button onClick={() => window.location.reload()} type="button">Try again</button>} />
-  if (!membershipContext) return <ClinicSetupScreen user={session!.user} />
+  if (membershipError) return <StatusScreen message={membershipError} action={<><button onClick={() => window.location.reload()} type="button">Check access again</button><button onClick={() => void handleInactiveSignOut()} type="button">Sign out</button></>} />
+  if (platformOwner) return <OwnerClinics />
+  if (!membershipContext) return <StatusScreen message="Clinic access is pending. Contact your clinic administrator or SoapSmile support for access." action={<button onClick={() => void handleInactiveSignOut()} type="button">Sign out</button>} />
 
   return <ClinicShell key={membershipContext.user.id + ':' + membershipContext.clinic.id} context={membershipContext} />
 }
@@ -242,67 +286,6 @@ function LoginScreen({ error, onError }: { error: string | null; onError: (value
         <div className="login-foot"><SoapSmileIcon name="shield" /><span>Secure access for your care team</span></div>
         </section>
       </div>
-    </main>
-  )
-}
-
-function ClinicSetupScreen({ user }: { user: User }) {
-  const [clinicName, setClinicName] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [signingOut, setSigningOut] = useState(false)
-
-  async function handleSignOut() {
-    if (submitting || signingOut) return
-    setSigningOut(true)
-    setError(null)
-    try {
-      const result = await signOut()
-      if (result) setError('Sign-out failed. Please try again.')
-    } catch {
-      setError('Sign-out failed. Please try again.')
-    } finally {
-      setSigningOut(false)
-    }
-  }
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (submitting || signingOut) return
-    const name = clinicName.trim()
-    if (name.length < 1 || name.length > 200) {
-      setError('Enter a clinic name between 1 and 200 characters.')
-      return
-    }
-    if (!supabase) {
-      setError('Supabase is not configured.')
-      return
-    }
-
-    setSubmitting(true)
-    setError(null)
-    const { error: bootstrapError } = await supabase.rpc('bootstrap_clinic', { p_name: name } as never)
-    setSubmitting(false)
-    if (bootstrapError) {
-      setError('We could not create your clinic. Please try again.')
-      return
-    }
-    window.location.reload()
-  }
-
-  return (
-    <main className="auth-page auth-page-setup">
-      <section className="auth-panel">
-        <SoapSmileBrand className="login-brand" />
-        <h1>Set up your clinic</h1>
-        <p className="panel-copy">Create the clinic workspace for {user.email ?? 'your account'}.</p>
-        <form className="auth-form" onSubmit={handleSubmit}>
-          <label>Clinic name<input value={clinicName} onChange={(event) => setClinicName(event.target.value)} autoComplete="organization" maxLength={200} required /></label>
-          <button type="submit" disabled={submitting || signingOut}>{submitting ? <><SoapSmileLoader size="button" />Creating clinic...</> : 'Create clinic'}</button>
-        </form>
-        <button type="button" className="button-secondary" disabled={submitting || signingOut} onClick={() => void handleSignOut()}>{signingOut ? 'Signing out...' : 'Sign out / Back to login'}</button>
-        {error && <SoapSmileFeedback tone="error">{error}</SoapSmileFeedback>}
-      </section>
     </main>
   )
 }
@@ -3911,7 +3894,9 @@ function AppointmentForm({ clinicId, timezone, encounter, patient, onCancel, onC
     const { data: createdAppointment, error: insertError } = bookingResult
     setSubmitting(false)
     if (insertError) {
-      setError('We could not confirm this appointment. Retry this booking or return to the patient file to review appointments.')
+      setError(insertError.code === '23P01'
+        ? 'This doctor already has an appointment during that time. Choose another time or doctor.'
+        : 'We could not confirm this appointment. Retry this booking or return to the patient file to review appointments.')
       return
     }
     if (!createdAppointment) {

@@ -231,6 +231,12 @@ Deno.serve(async (request: Request) => {
       return jsonResponse(403, { error: "An active administrator membership in this clinic is required." }, origin)
     }
 
+    const { data: clinic, error: clinicError } = await adminClient
+      .from("clinics").select("lifecycle_status").eq("id", payload.clinicId).maybeSingle()
+    if (clinicError || clinic?.lifecycle_status !== "active") {
+      return jsonResponse(403, { error: "Clinic access is unavailable. Invitations require an active clinic." }, origin)
+    }
+
     const authLookup = await findAuthUserByEmail(adminClient, payload.email)
     if (!authLookup.ok) {
       console.error("invite-staff: Auth user lookup failed")
