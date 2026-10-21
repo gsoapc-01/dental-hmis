@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Keep the Netlify SPA rewrite out of Cloudflare's static assets.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
